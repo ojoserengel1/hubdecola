@@ -22,8 +22,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-node_modules
-dist
+
+# Environment variables
 .env
-.vscode
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build outputs
+build
+coverage
+.cache
+.turbo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Cursor IDE
+.cursor/

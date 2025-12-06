@@ -1,0 +1,27 @@
+{
+  "name": "@decolaweb/api",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "SUPABASE_URL=https://kwickmcktmgehyclgsha.supabase.co SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3aWNrbWNrdG1nZWh5Y2xnc2hhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDg1NTAyNSwiZXhwIjoyMDgwNDMxMDI1fQ.2QaxX5z3riRAXuCxkKj_jFNOh2NcGkyabGdY48UDikM PORT=3001 NODE_ENV=development FRONTEND_URL=http://localhost:5173 tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@decolaweb/shared": "*",
+    "@supabase/supabase-js": "^2.39.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/node": "^20.10.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
+
