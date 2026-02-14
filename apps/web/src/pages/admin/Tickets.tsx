@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { getAdminTickets } from '@/lib/api';
 import {
   Card,
@@ -12,20 +13,18 @@ import {
   TableBody,
   TableRow,
   TableCell,
-  Badge,
   Select,
 } from '@/components/ui';
-import { TicketPriority, TicketStatus } from '@decolaweb/shared';
+import { TicketStatus } from '@decolaweb/shared';
 
 export function Tickets() {
+  const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState<string>('');
-  const [priorityFilter, setPriorityFilter] = useState<string>('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-tickets', statusFilter, priorityFilter],
+    queryKey: ['admin-tickets', statusFilter],
     queryFn: () => getAdminTickets({ 
       status: statusFilter || undefined,
-      priority: priorityFilter || undefined,
     }),
   });
 
@@ -68,7 +67,7 @@ export function Tickets() {
 
       {/* Filtros */}
       <Card className="mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="max-w-xs">
           <Select
             label="Filtrar por Status"
             value={statusFilter}
@@ -81,69 +80,75 @@ export function Tickets() {
               { value: TicketStatus.CLOSED, label: 'Fechado' },
             ]}
           />
-          <Select
-            label="Filtrar por Prioridade"
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
-            options={[
-              { value: '', label: 'Todas' },
-              { value: TicketPriority.LOW, label: 'Baixa' },
-              { value: TicketPriority.MEDIUM, label: 'Média' },
-              { value: TicketPriority.HIGH, label: 'Alta' },
-            ]}
-          />
         </div>
       </Card>
 
       {/* Lista de Tickets */}
-      <Card>
+      <Card className="overflow-hidden">
         {tickets.length > 0 ? (
-          <Table>
-            <TableHeader>
-              <TableHead>Cliente</TableHead>
-              <TableHead>Assunto</TableHead>
-              <TableHead>Prioridade</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Criado em</TableHead>
-            </TableHeader>
-            <TableBody>
-              {tickets.map((ticket: any) => (
-                <TableRow key={ticket.id} className="cursor-pointer hover:bg-gray-50">
-                  <TableCell>
-                    <div>
-                      <p className="font-semibold">{ticket.user?.name}</p>
-                      <p className="text-xs text-gray-500">{ticket.user?.company_name}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <p className="font-semibold">{ticket.subject}</p>
-                    <p className="text-xs text-gray-500 line-clamp-1">
-                      {ticket.description}
-                    </p>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        ticket.priority === 'alta'
-                          ? 'error'
-                          : ticket.priority === 'media'
-                          ? 'warning'
-                          : 'default'
-                      }
-                    >
-                      {ticket.priority}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={ticket.status} type="ticket" />
-                  </TableCell>
-                  <TableCell>
-                    {new Date(ticket.created_at).toLocaleDateString('pt-BR')}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className="overflow-x-auto">
+            <table className="w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-[25%]">
+                    Cliente
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-[40%]">
+                    Categoria
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-[15%]">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-[20%]">
+                    Criado em
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {tickets.map((ticket: any) => (
+                  <tr
+                    key={ticket.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => navigate(`/admin/tickets/${ticket.id}`)}
+                  >
+                    <td className="px-4 py-4 text-sm">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 truncate" title={ticket.user?.company_name || ticket.user?.name || 'N/A'}>
+                          {ticket.user?.company_name || ticket.user?.name || 'N/A'}
+                        </p>
+                        {ticket.user?.company_name && ticket.user?.name && (
+                          <p className="text-xs text-gray-500 truncate mt-0.5" title={ticket.user.name}>
+                            {ticket.user.name}
+                          </p>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 text-sm">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 truncate" title={ticket.subject}>
+                          {ticket.subject}
+                        </p>
+                        <p 
+                          className="text-xs text-gray-500 truncate mt-0.5" 
+                          title={ticket.description}
+                        >
+                          {ticket.description && ticket.description.length > 70 
+                            ? `${ticket.description.substring(0, 70)}...` 
+                            : ticket.description}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <StatusBadge status={ticket.status} type="ticket" />
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(ticket.created_at).toLocaleDateString('pt-BR')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="text-center text-gray-500 py-8">Nenhum ticket encontrado</p>
         )}

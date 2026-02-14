@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getDashboardData } from '@/lib/api';
-import { Card, PageHeader, Loading, StatusBadge, Button } from '@/components/ui';
-import { AtSign, AlertCircle, CheckCircle } from 'lucide-react';
+import { Card, PageHeader, Loading, StatusBadge, Button, Input } from '@/components/ui';
+import { AtSign, Globe, Lock } from 'lucide-react';
+import { RequestDomainModal } from '@/components/client/RequestDomainModal';
 
 export function Dominio() {
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: getDashboardData,
@@ -13,154 +17,272 @@ export function Dominio() {
 
   const domain = data?.data?.domain;
 
+  // Parse das informações do notes
+  const parseDomainInfo = () => {
+    if (!domain?.notes) return null;
+
+    const notes = domain.notes;
+
+    // Verifica se é domínio existente
+    if (notes.includes('Domínio existente registrado em')) {
+      const platformMatch = notes.match(/registrado em (.+?)\./);
+      const loginMatch = notes.match(/Login: (.+)/);
+      return {
+        type: 'existing' as const,
+        domain: domain.domain || '',
+        platform: platformMatch ? platformMatch[1] : '',
+        login: loginMatch ? loginMatch[1] : '',
+      };
+    }
+
+    // Verifica se é novo domínio
+    if (notes.includes('Solicitação de novo domínio')) {
+      const optionsMatch = notes.match(/Opções desejadas:\n(.+)/s);
+      const options = optionsMatch ? optionsMatch[1].trim().split('\n').filter(Boolean) : [];
+      return {
+        type: 'new' as const,
+        options,
+      };
+    }
+
+    return null;
+  };
+
+  const domainInfo = parseDomainInfo();
+
   return (
     <div>
       <PageHeader
         title="Domínio"
         subtitle="Informações sobre o domínio do seu site"
+        action={
+          !domain && (
+            <Button 
+              onClick={() => setIsRequestModalOpen(true)}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              Solicitar Domínio
+            </Button>
+          )
+        }
       />
 
+      {/* Card: Informações */}
+      <Card className="mb-6 bg-blue-50 border border-blue-200">
+        <div className="flex items-start gap-3">
+          <Globe className="w-6 h-6 text-blue-600" />
+          <div>
+            <h4 className="font-semibold text-blue-900 mb-2">
+              Domínio do seu site
+            </h4>
+            <p className="text-sm text-blue-800">
+              O domínio é o endereço do seu site na internet. Você pode usar um domínio que já possui ou solicitar um novo.
+            </p>
+          </div>
+        </div>
+      </Card>
+
       {domain ? (
-        <>
-          {/* Card: Domínio Atual */}
-          <Card className="mb-6">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-semibold text-dark mb-2">Seu Domínio</h3>
-                <p className="text-2xl font-mono font-bold text-primary mb-3">
-                  {domain.domain}
-                </p>
-                <StatusBadge status={domain.status} type="domain" />
+        <div className="space-y-6">
+          {/* Card: Domínio Aprovado (se existir) */}
+          {domain.domain && (
+            <Card className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300">
+              <div className="flex items-center gap-3 mb-4">
+                <Globe className="w-6 h-6 text-green-600" />
+                <h3 className="text-lg font-semibold text-green-900">Domínio Aprovado e em Uso</h3>
               </div>
-              <AtSign className="w-8 h-8 text-primary" />
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm text-green-800 mb-2">Seu domínio:</p>
+                  <p className="text-2xl font-mono font-black text-green-900">{domain.domain}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={domain.status} type="domain" />
+                  <p className="text-xs text-green-700">
+                    {domain.status === 'ativo' 
+                      ? 'Domínio ativo e configurado' 
+                      : 'Domínio em processo de configuração'}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Card: Solicitação de Domínio */}
+          <Card>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-dark">Sua Solicitação de Domínio</h3>
+              <StatusBadge status={domain.status} type="domain" />
             </div>
 
-            <div className="mt-4 pt-4 border-t">
-              <p className="text-sm text-gray-600 mb-2">
-                <strong>Registrado em:</strong>{' '}
-                {new Date(domain.created_at).toLocaleDateString('pt-BR')}
-              </p>
+          {/* Informações da Solicitação - Read Only */}
+          {domainInfo && (
+            <div className="space-y-6">
+              {domainInfo.type === 'existing' ? (
+                <>
+                  {/* Domínio Existente */}
+                  <div>
+                    <Input
+                      label="Você já possui um domínio registrado?"
+                      value="Sim, já tenho"
+                      readOnly
+                      disabled
+                      className="bg-gray-50 cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <Input
+                      label="Qual é o domínio?"
+                      value={domainInfo.domain || ''}
+                      readOnly
+                      disabled
+                      className="bg-gray-50 cursor-not-allowed font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <Input
+                      label="Plataforma/Registrador"
+                      value={domainInfo.platform}
+                      readOnly
+                      disabled
+                      className="bg-gray-50 cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <Input
+                      label="Login/Acesso"
+                      value={domainInfo.login}
+                      readOnly
+                      disabled
+                      className="bg-gray-50 cursor-not-allowed font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="mb-2">
+                      <label className="block text-sm font-semibold text-gray-700">Senha</label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value="••••••••"
+                        readOnly
+                        disabled
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 cursor-not-allowed"
+                      />
+                      <Lock className="w-5 h-5 text-gray-400" />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Senha fornecida na solicitação
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Novo Domínio */}
+                  <div>
+                    <Input
+                      label="Você já possui um domínio registrado?"
+                      value="Não, quero um novo"
+                      readOnly
+                      disabled
+                      className="bg-gray-50 cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="mb-2">
+                      <label className="block text-sm font-semibold text-gray-700">
+                        Opções de Domínio Desejadas
+                      </label>
+                    </div>
+                    <div className="space-y-2">
+                      {domainInfo.options.map((option, index) => (
+                        <input
+                          key={index}
+                          value={`${index + 1}. ${option.trim()}`}
+                          readOnly
+                          disabled
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 cursor-not-allowed font-mono"
+                        />
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Nossa equipe verificará a disponibilidade e registrará o primeiro disponível.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {/* Informações Adicionais */}
+              <div className="pt-4 border-t">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+                  <div>
+                    <p className="font-semibold text-gray-700 mb-1">Solicitado em:</p>
+                    <p>
+                      {new Date(domain.created_at).toLocaleString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-700 mb-1">Última atualização:</p>
+                    <p>
+                      {new Date((domain as any).updated_at || domain.created_at).toLocaleString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
-          </Card>
-
-          {/* Card: Status e Instruções */}
-          {domain.status === 'aguardando_dns' && (
-            <Card className="mb-6 bg-yellow-50 border border-yellow-200">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-6 h-6 text-yellow-600 flex-shrink-0" />
-                <div>
-                  <h4 className="font-semibold text-yellow-900 mb-2">
-                    Aguardando Configuração DNS
-                  </h4>
-                  <p className="text-sm text-yellow-800 mb-3">
-                    Para que seu site fique acessível através deste domínio, é necessário
-                    configurar os registros DNS. Se você já possui o domínio registrado,
-                    entre em contato conosco para receber as instruções.
-                  </p>
-                  <Button size="sm" variant="outline">
-                    Ver Instruções DNS
-                  </Button>
-                </div>
-              </div>
-            </Card>
           )}
 
-          {domain.status === 'configurando' && (
-            <Card className="mb-6 bg-blue-50 border border-blue-200">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-6 h-6 text-blue-600 flex-shrink-0" />
-                <div>
-                  <h4 className="font-semibold text-blue-900 mb-2">
-                    Configuração em Andamento
-                  </h4>
-                  <p className="text-sm text-blue-800">
-                    Estamos configurando seu domínio. Este processo pode levar até 48 horas
-                    para propagação completa. Você será notificado quando estiver concluído.
-                  </p>
-                </div>
-              </div>
-            </Card>
-          )}
-
-          {domain.status === 'ativo' && (
-            <Card className="mb-6 bg-green-50 border border-green-200">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
-                <div>
-                  <h4 className="font-semibold text-green-900 mb-2">
-                    Domínio Ativo
-                  </h4>
-                  <p className="text-sm text-green-800 mb-3">
-                    Seu domínio está configurado e ativo! Seu site está acessível em:
-                  </p>
-                  <a
-                    href={`https://${domain.domain}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm font-semibold text-green-700 hover:underline"
-                  >
-                    https://{domain.domain}
-                  </a>
-                </div>
-              </div>
-            </Card>
-          )}
-
-          {/* Notas da Equipe */}
-          {domain.notes && (
-            <Card>
-              <h4 className="font-semibold text-dark mb-3">Notas da Equipe</h4>
+          {/* Se não conseguir parsear, mostra as notas */}
+          {!domainInfo && domain.notes && (
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-sm font-semibold text-gray-700 mb-2">Informações da Solicitação:</p>
               <p className="text-sm text-gray-600 whitespace-pre-line">{domain.notes}</p>
-            </Card>
+            </div>
           )}
-        </>
+          </Card>
+        </div>
       ) : (
         <Card>
           <div className="text-center py-8">
             <AtSign className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              Nenhum domínio configurado
+              Nenhuma solicitação de domínio
             </h3>
             <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              Entre em contato com nossa equipe para configurar o domínio do seu site
+              Solicite a configuração do domínio do seu site
             </p>
-            <Button>Solicitar Domínio</Button>
+            <Button 
+              onClick={() => setIsRequestModalOpen(true)}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              Solicitar Domínio
+            </Button>
           </div>
         </Card>
       )}
 
-      {/* Card: Informações sobre Domínio */}
-      <Card className="mt-6">
-        <h4 className="font-semibold text-dark mb-3">❓ Perguntas Frequentes</h4>
-        <div className="space-y-4">
-          <div>
-            <p className="text-sm font-semibold text-gray-900 mb-1">
-              Posso usar meu próprio domínio?
-            </p>
-            <p className="text-sm text-gray-600">
-              Sim! Se você já possui um domínio registrado, podemos configurá-lo para
-              apontar para seu site DecolaWeb. Entre em contato com o suporte.
-            </p>
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-900 mb-1">
-              Quanto tempo leva para o domínio ficar ativo?
-            </p>
-            <p className="text-sm text-gray-600">
-              A configuração do domínio pode levar de algumas horas até 48 horas para
-              propagação completa em todos os servidores DNS da internet.
-            </p>
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-900 mb-1">
-              O domínio está incluído no plano?
-            </p>
-            <p className="text-sm text-gray-600">
-              O registro e renovação anual do domínio estão inclusos no seu plano DecolaWeb.
-            </p>
-          </div>
-        </div>
-      </Card>
+      {/* Modal de Solicitação de Domínio */}
+      <RequestDomainModal
+        isOpen={isRequestModalOpen}
+        onClose={() => setIsRequestModalOpen(false)}
+      />
     </div>
   );
 }

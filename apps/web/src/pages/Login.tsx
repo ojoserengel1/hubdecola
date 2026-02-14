@@ -26,6 +26,12 @@ export function Login() {
       const loginResult = await login(email, password);
       console.log('✅ Login bem-sucedido:', loginResult);
       
+      if (!loginResult.user) {
+        setError('Erro ao fazer login. Verifique suas credenciais.');
+        setIsLoading(false);
+        return;
+      }
+      
       // Aguarda um pouco para garantir que a sessão foi salva
       await new Promise(resolve => setTimeout(resolve, 500));
       
@@ -34,7 +40,7 @@ export function Login() {
       await checkAuth();
 
       // Aguarda um pouco mais para garantir que o estado foi atualizado
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Busca o perfil do estado após checkAuth
       const profile = useAuthStore.getState().user;
@@ -42,7 +48,18 @@ export function Login() {
       
       if (!profile) {
         console.error('❌ Perfil não encontrado no estado após checkAuth');
-        setError('Perfil não encontrado. Entre em contato com o suporte.');
+        
+        // Verifica se o backend está acessível
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+        try {
+          await fetch(`${apiUrl}/health`);
+        } catch (healthError) {
+          setError('Backend não está acessível. Verifique se o servidor está rodando na porta 3001.');
+          setIsLoading(false);
+          return;
+        }
+        
+        setError('Perfil não encontrado. Verifique se o usuário tem um perfil criado na tabela profiles.');
         setIsLoading(false);
         return;
       }
@@ -57,7 +74,16 @@ export function Login() {
       }
     } catch (err: any) {
       console.error('❌ Erro no login:', err);
-      setError(err.message || 'Erro ao fazer login. Verifique suas credenciais.');
+      
+      // Mensagens de erro mais específicas
+      if (err.message?.includes('Invalid login credentials')) {
+        setError('E-mail ou senha incorretos.');
+      } else if (err.message?.includes('Failed to fetch') || err.message?.includes('ERR_CONNECTION_REFUSED')) {
+        setError('Não foi possível conectar ao servidor. Verifique se o backend está rodando.');
+      } else {
+        setError(err.message || 'Erro ao fazer login. Verifique suas credenciais.');
+      }
+      
       setIsLoading(false);
     }
   };

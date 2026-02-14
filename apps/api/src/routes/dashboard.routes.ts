@@ -23,6 +23,8 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       emailsResult,
       domainResult,
       contractResult,
+      pipelineResult,
+      templatesResult,
     ] = await Promise.all([
       supabaseAdmin.from('profiles').select('*').eq('id', userId).single(),
       supabaseAdmin
@@ -41,6 +43,8 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       supabaseAdmin.from('emails_profissionais').select('*').eq('user_id', userId),
       supabaseAdmin.from('domains').select('*').eq('user_id', userId).single(),
       supabaseAdmin.from('contracts').select('*').eq('user_id', userId).single(),
+      supabaseAdmin.from('production_pipeline').select('*').eq('user_id', userId).single(),
+      supabaseAdmin.from('site_status_templates').select('*').eq('is_active', true).order('display_order', { ascending: true }),
     ]);
 
     const dashboardData: DashboardData = {
@@ -55,6 +59,8 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       emails: emailsResult.data || [],
       domain: domainResult.data || undefined,
       contract: contractResult.data || undefined,
+      pipeline: pipelineResult.data || undefined,
+      statusTemplates: templatesResult.data || [],
     };
 
     return res.json({

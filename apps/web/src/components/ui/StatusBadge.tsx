@@ -17,7 +17,8 @@ interface StatusBadgeProps {
     | SiteStatus
     | TicketStatus
     | DomainStatus
-    | EmailStatus;
+    | EmailStatus
+    | string; // Aceita strings customizadas para status dinâmicos
   type:
     | 'subscription'
     | 'invoice'
@@ -48,9 +49,11 @@ const statusConfig = {
   },
   site: {
     aguardando_briefing: { label: 'Aguardando Briefing', variant: 'default' as const },
+    aguardando_preenchimento: { label: 'Aguardando Preenchimento', variant: 'default' as const },
+    briefing_enviado: { label: 'Briefing Enviado', variant: 'info' as const },
     em_producao: { label: 'Em Produção', variant: 'info' as const },
     em_aprovacao: { label: 'Em Aprovação', variant: 'warning' as const },
-    site_publicado: { label: 'Publicado', variant: 'success' as const },
+    site_publicado: { label: 'Site no Ar', variant: 'success' as const },
   },
   ticket: {
     aberto: { label: 'Aberto', variant: 'error' as const },
@@ -59,6 +62,7 @@ const statusConfig = {
     fechado: { label: 'Fechado', variant: 'success' as const },
   },
   domain: {
+    pendente: { label: 'Pendente', variant: 'warning' as const },
     aguardando_dns: { label: 'Aguardando DNS', variant: 'warning' as const },
     configurando: { label: 'Configurando', variant: 'info' as const },
     ativo: { label: 'Ativo', variant: 'success' as const },

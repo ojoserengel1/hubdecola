@@ -1,9 +1,38 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { supabaseAdmin } from '../config/supabase';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { CreateTicketRequest, CreateMessageRequest, TicketStatus } from '@decolaweb/shared';
+import type { Request } from 'express';
 
 const router = Router();
+
+// Configuração do multer para upload de arquivos
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback): void => {
+    // Aceitar imagens, PDFs e documentos comuns
+    const allowedMimes = [
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+    ];
+    
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de arquivo não permitido. Use imagens, PDFs ou documentos.'));
+    }
+  },
+});
 
 /**
  * GET /tickets
@@ -40,16 +69,50 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
  * POST /tickets
  * Cria um novo ticket de suporte
  */
-router.post('/', authenticate, async (req: AuthRequest, res) => {
+router.post('/', authenticate, upload.single('attachment'), async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.id;
     const { subject, description, priority }: CreateTicketRequest = req.body;
+    const file = req.file;
 
-    if (!subject || !description || !priority) {
+    if (!subject || !description) {
       return res.status(400).json({
         success: false,
-        error: 'Assunto, descrição e prioridade são obrigatórios',
+        error: 'Categoria e descrição são obrigatórios',
       });
+    }
+
+    // Usa prioridade padrão 'media' se não fornecida
+    const ticketPriority = priority || 'media';
+
+    let attachmentUrl: string | null = null;
+
+    // Se houver arquivo, fazer upload para Supabase Storage
+    if (file) {
+      const fileExt = file.originalname.split('.').pop();
+      const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('ticket-attachments')
+        .upload(fileName, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error('Erro ao fazer upload do arquivo:', uploadError);
+        return res.status(500).json({
+          success: false,
+          error: 'Erro ao fazer upload do arquivo',
+        });
+      }
+
+      // Obter URL pública do arquivo
+      const { data: urlData } = supabaseAdmin.storage
+        .from('ticket-attachments')
+        .getPublicUrl(fileName);
+
+      attachmentUrl = urlData.publicUrl;
     }
 
     const { data: ticket, error } = await supabaseAdmin
@@ -58,8 +121,9 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
         user_id: userId,
         subject,
         description,
-        priority,
+        priority: ticketPriority,
         status: TicketStatus.OPEN,
+        attachment_url: attachmentUrl,
       })
       .select()
       .single();
@@ -73,11 +137,11 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       data: ticket,
       message: 'Ticket criado com sucesso',
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro ao criar ticket:', error);
     return res.status(500).json({
       success: false,
-      error: 'Erro ao criar ticket',
+      error: error.message || 'Erro ao criar ticket',
     });
   }
 });

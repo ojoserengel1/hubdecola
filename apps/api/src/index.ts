@@ -13,6 +13,9 @@ import siteStatusRoutes from './routes/site-status.routes';
 import ticketsRoutes from './routes/tickets.routes';
 import adminRoutes from './routes/admin.routes';
 import webhooksRoutes from './routes/webhooks.routes';
+import chatRoutes from './routes/chat.routes';
+import emailsRoutes from './routes/emails.routes';
+import domainRoutes from './routes/domain.routes';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -82,6 +85,9 @@ app.use('/api/site-status', siteStatusRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/webhooks', webhooksRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/emails', emailsRoutes);
+app.use('/api/domain', domainRoutes);
 
 // Rota 404
 app.use((req: Request, res: Response) => {

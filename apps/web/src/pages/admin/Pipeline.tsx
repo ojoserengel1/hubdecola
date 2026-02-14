@@ -15,9 +15,8 @@ import {
   useDroppable,
 } from '@dnd-kit/core';
 import {
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+  useDraggable,
+} from '@dnd-kit/core';
 import { getAdminPipeline, updatePipeline, getPipelineStages } from '@/lib/api';
 import { Card, PageHeader, Loading, Badge, Button } from '@/components/ui';
 import { PipelineStage } from '@decolaweb/shared';
@@ -29,7 +28,7 @@ import { FilterPipelineStagesModal } from '@/components/admin/FilterPipelineStag
 interface PipelineItem {
   id: string;
   user_id: string;
-  stage: PipelineStage;
+  stage: string | PipelineStage; // Pode ser string (slug) ou enum
   notes?: string;
   updated_at: string;
   user?: {
@@ -52,9 +51,8 @@ function SortableItem({ item, isDraggingAny }: SortableItemProps) {
     listeners,
     setNodeRef,
     transform,
-    transition,
     isDragging,
-  } = useSortable({
+  } = useDraggable({
     id: item.id,
     data: {
       type: 'pipeline-item',
@@ -63,12 +61,11 @@ function SortableItem({ item, isDraggingAny }: SortableItemProps) {
   });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const handleCardClick = () => {
+  const handleCardClick = (e: React.MouseEvent) => {
     // Se não estiver arrastando, navega
     if (!isDragging && !isDraggingAny) {
       console.log('🔍 Navegando para:', `/admin/clientes/${item.user_id}`);
@@ -76,15 +73,10 @@ function SortableItem({ item, isDraggingAny }: SortableItemProps) {
     }
   };
 
-  const handleGripClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-  };
-
   return (
     <div ref={setNodeRef} style={style}>
       <Card className={`p-3 hover:shadow-md transition-shadow relative group ${
-        isDragging ? 'ring-2 ring-primary ring-offset-2' : ''
+        isDragging ? 'ring-2 ring-primary ring-offset-2' : 'cursor-pointer'
       }`}>
         <div className="flex items-start gap-2">
           {/* Área de drag (grip) - APENAS para arrastar */}
@@ -92,15 +84,13 @@ function SortableItem({ item, isDraggingAny }: SortableItemProps) {
             {...attributes}
             {...listeners}
             className="cursor-grab active:cursor-grabbing flex-shrink-0"
-            onClick={handleGripClick}
-            onPointerDown={handleGripClick}
           >
             <GripVertical className="w-4 h-4 text-gray-400 hover:text-gray-600" />
           </div>
 
           {/* Área clicável (resto do card) */}
           <div 
-            className="flex-1 min-w-0 cursor-pointer"
+            className="flex-1 min-w-0"
             onClick={handleCardClick}
           >
             <div className="flex items-center gap-2 mb-1">
@@ -124,7 +114,7 @@ function SortableItem({ item, isDraggingAny }: SortableItemProps) {
 }
 
 interface DroppableColumnProps {
-  id: PipelineStage;
+  id: string; // Aceita string (slug) ou enum convertido para string
   label: string;
   clients: PipelineItem[];
   isOver?: boolean;
@@ -190,13 +180,22 @@ export function Pipeline() {
   });
 
   const updatePipelineMutation = useMutation({
-    mutationFn: ({ userId, stage, notes }: { userId: string; stage: PipelineStage; notes?: string }) =>
-      updatePipeline(userId, { stage, notes }),
-    onSuccess: () => {
+    mutationFn: ({ userId, stage, notes }: { userId: string; stage: string; notes?: string }) => {
+      console.log('🔄 [MUTATION] Atualizando pipeline:', { userId, stage, notes });
+      return updatePipeline(userId, { stage: stage as PipelineStage, notes });
+    },
+    onSuccess: (data) => {
+      console.log('✅ [MUTATION] Pipeline atualizado com sucesso:', data);
       toast.success('✅ Estágio do cliente atualizado!');
       queryClient.invalidateQueries({ queryKey: ['admin-pipeline'] });
     },
     onError: (error: any) => {
+      console.error('❌ [MUTATION] Erro ao atualizar pipeline:', error);
+      console.error('❌ [MUTATION] Detalhes do erro:', {
+        message: error.message,
+        response: error.response,
+        stack: error.stack,
+      });
       toast.error(error.message || 'Erro ao atualizar estágio');
     },
   });
@@ -204,7 +203,7 @@ export function Pipeline() {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        distance: 5, // Reduzido para facilitar o drag
       },
     }),
     useSensor(KeyboardSensor)
@@ -246,6 +245,7 @@ export function Pipeline() {
   });
 
   const handleDragStart = (event: DragStartEvent) => {
+    console.log('🚀 [DRAG] Iniciado:', event.active.id, event.active.data.current);
     setActiveId(event.active.id as string);
     setIsDraggingAny(true);
   };
@@ -254,8 +254,9 @@ export function Pipeline() {
     const { over } = event;
     if (over) {
       const overData = over.data.current;
+      console.log('📍 [DRAG] Sobre:', over.id, overData);
       if (overData?.type === 'stage') {
-        setOverId(over.id as string);
+        setOverId(String(over.id));
       } else {
         setOverId(null);
       }
@@ -279,29 +280,54 @@ export function Pipeline() {
     if (!activeData || !overData) return;
 
     const activeItem = activeData.item as PipelineItem;
-    let targetStageId: PipelineStage | null = null;
+    let targetStageId: string | null = null;
 
     // Se soltou em uma coluna (stage)
     if (overData.type === 'stage') {
-      targetStageId = over.id as PipelineStage;
+      targetStageId = String(over.id); // Converte para string
     }
     // Se soltou em outro item, pega o stage do item
     else if (overData.type === 'pipeline-item') {
-      targetStageId = (overData.item as PipelineItem).stage;
+      targetStageId = String((overData.item as PipelineItem).stage);
     }
 
-    if (!targetStageId) return;
+    if (!targetStageId) {
+      console.log('❌ [DRAG] targetStageId não encontrado');
+      return;
+    }
+
+    // Normaliza os stages para comparação (ambos como string)
+    const activeStageStr = String(activeItem.stage);
+    const targetStageStr = String(targetStageId);
 
     // Se o item foi solto no mesmo estágio, não faz nada
-    if (activeItem.stage === targetStageId) return;
+    if (activeStageStr === targetStageStr) {
+      console.log('⚠️ [DRAG] Item solto no mesmo estágio');
+      return;
+    }
+
+    console.log('✅ [DRAG] Movendo de', activeStageStr, 'para', targetStageStr);
 
     // Atualiza o estágio do cliente
-    const fromStage = stages.find((s) => s.id === activeItem.stage || s.slug === activeItem.stage)?.label || 'estágio anterior';
-    const toStage = stages.find((s) => s.id === targetStageId || s.slug === targetStageId)?.label || 'novo estágio';
+    const fromStage = stages.find((s) => {
+      const sId = String(s.id || s.slug || '');
+      return sId === activeStageStr || s.slug === activeStageStr;
+    })?.label || 'estágio anterior';
+    
+    const toStage = stages.find((s) => {
+      const sId = String(s.id || s.slug || '');
+      return sId === targetStageStr || s.slug === targetStageStr;
+    })?.label || 'novo estágio';
+
+    console.log('📤 [DRAG] Enviando atualização:', {
+      userId: activeItem.user_id,
+      stage: targetStageStr,
+      notes: activeItem.notes || `Movido de ${fromStage} para ${toStage}`,
+    });
 
     updatePipelineMutation.mutate({
       userId: activeItem.user_id,
-      stage: targetStageId,
+      stage: targetStageStr,
       notes: activeItem.notes || `Movido de ${fromStage} para ${toStage}`,
     });
   };
@@ -366,6 +392,11 @@ export function Pipeline() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
+          onDragCancel={() => {
+            setActiveId(null);
+            setOverId(null);
+            setIsDraggingAny(false);
+          }}
         >
           {/* Área de scroll horizontal - APENAS AQUI */}
           <div 
@@ -376,16 +407,19 @@ export function Pipeline() {
             }}
           >
             <div className="flex gap-4 min-w-max p-4">
-              {groupedByStage.map((stage) => (
-                <DroppableColumn
-                  key={stage.id}
-                  id={stage.id}
-                  label={stage.label}
-                  clients={stage.clients}
-                  isOver={overId === stage.id}
-                  isDraggingAny={isDraggingAny}
-                />
-              ))}
+              {groupedByStage.map((stage) => {
+                const stageId = String(stage.id || stage.slug || '');
+                return (
+                  <DroppableColumn
+                    key={stageId}
+                    id={stageId}
+                    label={stage.label}
+                    clients={stage.clients}
+                    isOver={overId === stageId}
+                    isDraggingAny={isDraggingAny}
+                  />
+                );
+              })}
             </div>
           </div>
 

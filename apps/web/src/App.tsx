@@ -10,12 +10,13 @@ import {
   Dashboard,
   Briefing,
   Pagamentos,
-  StatusSite,
   Emails,
   Dominio,
   Suporte,
+  TicketDetalhe as ClientTicketDetalhe,
   Contrato,
 } from '@/pages/client';
+import { Chat as ClientChat } from '@/pages/client/Chat';
 
 // Admin Pages
 import {
@@ -23,15 +24,20 @@ import {
   ClienteDetalhe,
   Pipeline,
   Tickets,
+  TicketDetalhe as AdminTicketDetalhe,
   Financeiro,
+  Emails as AdminEmails,
+  StatusTemplates,
+  Planos,
 } from '@/pages/admin';
+import { Chat as AdminChat } from '@/pages/admin/Chat';
 
 function App() {
   return (
     <>
       <Toaster position="top-right" richColors />
-      <BrowserRouter>
-        <Routes>
+    <BrowserRouter>
+      <Routes>
         {/* Login */}
         <Route path="/login" element={<Login />} />
 
@@ -45,11 +51,12 @@ function App() {
                   <Route path="dashboard" element={<Dashboard />} />
                   <Route path="briefing" element={<Briefing />} />
                   <Route path="pagamentos" element={<Pagamentos />} />
-                  <Route path="status-site" element={<StatusSite />} />
                   <Route path="emails" element={<Emails />} />
                   <Route path="dominio" element={<Dominio />} />
-                  <Route path="suporte" element={<Suporte />} />
+                  <Route path="tickets" element={<Suporte />} />
+                  <Route path="tickets/:id" element={<ClientTicketDetalhe />} />
                   <Route path="contrato" element={<Contrato />} />
+                  <Route path="chat" element={<ClientChat />} />
                   <Route path="*" element={<Navigate to="/app/dashboard" replace />} />
                 </Routes>
               </AppLayout>
@@ -68,7 +75,12 @@ function App() {
                   <Route path="clientes/:id" element={<ClienteDetalhe />} />
                   <Route path="pipeline" element={<Pipeline />} />
                   <Route path="tickets" element={<Tickets />} />
+                  <Route path="tickets/:id" element={<AdminTicketDetalhe />} />
                   <Route path="financeiro" element={<Financeiro />} />
+                  <Route path="chat" element={<AdminChat />} />
+                  <Route path="emails" element={<AdminEmails />} />
+                  <Route path="status-templates" element={<StatusTemplates />} />
+                  <Route path="planos" element={<Planos />} />
                   <Route path="*" element={<Navigate to="/admin/clientes" replace />} />
                 </Routes>
               </AppLayout>

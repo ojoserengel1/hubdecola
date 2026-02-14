@@ -9,8 +9,10 @@ import {
   Palette, 
   MessageSquare,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  ArrowRight
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 interface BriefingFormData {
   // Dados da Empresa
@@ -84,10 +86,10 @@ export function Briefing() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['briefing'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      alert('✅ Briefing salvo com sucesso!');
+      alert('✅ Briefing enviado com sucesso!');
     },
     onError: () => {
-      alert('❌ Erro ao salvar briefing. Tente novamente.');
+      alert('❌ Erro ao enviar briefing. Tente novamente.');
     }
   });
 
@@ -116,6 +118,57 @@ export function Briefing() {
   const briefing = data?.data;
   const status = briefing?.status || 'nao_enviado';
 
+  // Se o briefing já foi enviado, mostrar apenas mensagem de sucesso
+  if (status !== 'nao_enviado') {
+    return (
+      <div className="min-h-screen bg-background">
+        <PageHeader
+          title="Briefing do Projeto"
+          subtitle="Quanto mais detalhes você fornecer, melhor será seu site"
+        />
+
+        {/* Mensagem de Sucesso */}
+        <Card className="max-w-3xl mx-auto" padding="lg">
+          <div className="text-center py-8">
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
+                <CheckCircle className="w-12 h-12 text-green-600" />
+              </div>
+            </div>
+            
+            <h2 className="text-3xl font-black text-dark mb-4">
+              Briefing Enviado com Sucesso!
+            </h2>
+            
+            <p className="text-lg text-gray-600 mb-8">
+              Nossa equipe já recebeu todas as suas informações e está analisando os detalhes do seu projeto.
+            </p>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8 text-left">
+              <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5" />
+                Próximos passos
+              </h3>
+              <ul className="text-sm text-blue-800 space-y-2 ml-7">
+                <li>✓ Briefing recebido e em análise</li>
+                <li>• Nossa equipe entrará em contato em breve</li>
+                <li>• Acompanhe o desenvolvimento no Dashboard</li>
+              </ul>
+            </div>
+
+            <Link to="/app/dashboard">
+              <Button variant="primary" size="lg" className="inline-flex items-center gap-2">
+                <Globe className="w-5 h-5" />
+                Acompanhar Status do Site
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   const sections = [
     { id: 1, title: 'Dados da Empresa', icon: Building2 },
     { id: 2, title: 'Estrutura do Site', icon: Globe },
@@ -132,31 +185,17 @@ export function Briefing() {
 
       {/* Status Banner */}
       <div className="mb-6">
-        {status === 'nao_enviado' ? (
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-semibold text-yellow-900">Briefing ainda não enviado</h3>
-                <p className="text-sm text-yellow-800 mt-1">
-                  Preencha todas as informações necessárias sobre seu projeto. Você pode salvar e editar quantas vezes quiser.
-                </p>
-              </div>
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-yellow-900">Briefing ainda não enviado</h3>
+              <p className="text-sm text-yellow-800 mt-1">
+                Preencha todas as informações necessárias sobre seu projeto. Preste muito atenção ao preencher, quanto mais informações, melhor.
+              </p>
             </div>
           </div>
-        ) : (
-          <div className="bg-green-50 border-l-4 border-green-400 p-4 rounded-r-lg">
-            <div className="flex items-start gap-3">
-              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-semibold text-green-900">Briefing enviado ✓</h3>
-                <p className="text-sm text-green-800 mt-1">
-                  Nossa equipe já recebeu suas informações. Você pode editar e salvar novamente se desejar.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Section Navigation */}
@@ -370,13 +409,16 @@ export function Briefing() {
                 <label className="block text-sm font-semibold text-dark mb-2">
                   Descrição completa da empresa <span className="text-primary">*</span>
                 </label>
+                <p className="text-xs text-gray-600 mb-2">
+                  💡 O que vocês fazem, o que vendem, há quanto tempo existem, história da empresa... Quanto mais informação, melhor!
+                </p>
                 <textarea
                   name="company_description"
                   value={formData.company_description}
                   onChange={handleChange}
                   rows={6}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                  placeholder="O que vocês fazem, o que vendem, há quanto tempo existem, história da empresa... Quanto mais informação, melhor!"
+                  placeholder="Escreva a descrição completa da sua empresa aqui..."
                   required
                 />
               </div>
@@ -414,13 +456,16 @@ export function Briefing() {
                 <label className="block text-sm font-semibold text-dark mb-2">
                   Principais produtos/serviços <span className="text-primary">*</span>
                 </label>
+                <p className="text-xs text-gray-600 mb-2">
+                  💡 Descreva cada produto ou serviço que deve aparecer no site.
+                </p>
                 <textarea
                   name="main_services"
                   value={formData.main_services}
                   onChange={handleChange}
                   rows={5}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                  placeholder="Descreva cada produto ou serviço que deve aparecer no site..."
+                  placeholder="Escreva seus principais produtos/serviços aqui..."
                   required
                 />
               </div>
@@ -429,13 +474,16 @@ export function Briefing() {
                 <label className="block text-sm font-semibold text-dark mb-2">
                   Principais diferenciais <span className="text-primary">*</span>
                 </label>
+                <p className="text-xs text-gray-600 mb-2">
+                  💡 O que torna sua empresa única? Por que os clientes devem escolher você?
+                </p>
                 <textarea
                   name="differentials"
                   value={formData.differentials}
                   onChange={handleChange}
                   rows={4}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                  placeholder="O que torna sua empresa única? Por que os clientes devem escolher você?"
+                  placeholder="Escreva os diferenciais da sua empresa aqui..."
                   required
                 />
               </div>
@@ -458,17 +506,17 @@ export function Briefing() {
                   <label className="block text-sm font-semibold text-dark mb-2">
                     Links das Redes Sociais
                   </label>
+                  <p className="text-xs text-gray-600 mb-2">
+                    💡 Instagram, Facebook, LinkedIn, etc. (um por linha)
+                  </p>
                   <textarea
                     name="social_links"
                     value={formData.social_links}
                     onChange={handleChange}
                     rows={3}
                     className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                    placeholder="Cole os links das suas redes sociais (um por linha)"
+                    placeholder="Cole os links das suas redes sociais aqui..."
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Instagram, Facebook, LinkedIn, etc.
-                  </p>
                 </div>
               </div>
             </div>
@@ -519,18 +567,18 @@ export function Briefing() {
                   <label className="block text-sm font-semibold text-dark mb-2">
                     Links dos arquivos da sua marca <span className="text-primary">*</span>
                   </label>
+                  <p className="text-xs text-gray-600 mb-2">
+                    💡 Inclua logo em alta resolução, variações, fontes, cores e quaisquer outros arquivos relacionados à sua identidade visual. Use Google Drive, Dropbox, WeTransfer, etc.
+                  </p>
                   <textarea
                     name="brand_assets_links"
                     value={formData.brand_assets_links}
                     onChange={handleChange}
                     rows={5}
                     className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                    placeholder="Cole aqui links de pastas do Google Drive, Dropbox, WeTransfer, etc. com todos os arquivos da sua marca (logo, aplicações, manual de marca, etc.)"
+                    placeholder="Cole os links dos arquivos aqui..."
                     required={formData.has_brand_identity === 'true'}
                   />
-                  <p className="text-xs text-gray-500 mt-2">
-                    💡 Inclua logo em alta resolução, variações, fontes, cores e quaisquer outros arquivos relacionados à sua identidade visual
-                  </p>
                 </div>
               )}
 
@@ -587,23 +635,23 @@ export function Briefing() {
                 <label className="block text-sm font-semibold text-dark mb-2">
                   Observações gerais e pedidos específicos
                 </label>
+                <p className="text-xs text-gray-600 mb-2">
+                  💡 Se você tiver alguma observação importante, preferência de estilo ou algo que faça muita questão de ter no seu site (uma seção, um botão, uma cor, uma frase, etc.), descreva aqui.
+                </p>
                 <textarea
                   name="general_notes"
                   value={formData.general_notes}
                   onChange={handleChange}
                   rows={8}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                  placeholder="Se você tiver alguma observação importante, preferência de estilo ou algo que faça muita questão de ter no seu site (uma seção, um botão, uma cor, uma frase, etc.), descreva aqui..."
+                  placeholder="Escreva suas observações aqui..."
                 />
-                <p className="text-xs text-gray-500 mt-2">
-                  💡 Este é o espaço para você nos contar qualquer detalhe que não foi coberto nas perguntas anteriores
-                </p>
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                <h3 className="font-semibold text-blue-900 mb-2">Pronto para salvar?</h3>
+                <h3 className="font-semibold text-blue-900 mb-2">Pronto para enviar?</h3>
                 <p className="text-sm text-blue-800">
-                  Revise todas as informações nas seções anteriores antes de salvar. Você pode editar e salvar quantas vezes quiser!
+                  Revise todas as informações nas seções anteriores antes de enviar.
                 </p>
               </div>
             </div>
@@ -633,17 +681,17 @@ export function Briefing() {
                 <button
                   type="submit"
                   disabled={mutation.isPending}
-                  className="px-12 py-4 bg-primary text-white rounded-lg hover:bg-red-700 font-black text-lg transition shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-12 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-black text-lg transition shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {mutation.isPending ? (
                     <>
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Salvando...
+                      Enviando...
                     </>
                   ) : (
                     <>
                       <FileText className="w-5 h-5" />
-                      Salvar Briefing
+                      Enviar Briefing
                     </>
                   )}
                 </button>

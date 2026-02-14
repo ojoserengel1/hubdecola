@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getDashboardData } from '@/lib/api';
 import {
@@ -15,8 +16,15 @@ import {
   TableCell,
 } from '@/components/ui';
 import { Mail, Plus } from 'lucide-react';
+import { RequestEmailModal } from '@/components/client/RequestEmailModal';
+import { EmailAccessModal } from '@/components/client/EmailAccessModal';
+import type { EmailProfessional } from '@decolaweb/shared';
 
 export function Emails() {
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isAccessModalOpen, setIsAccessModalOpen] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState<EmailProfessional | null>(null);
+  
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: getDashboardData,
@@ -26,6 +34,7 @@ export function Emails() {
 
   const emails = data?.data?.emails || [];
   const profile = data?.data?.profile;
+  const domain = data?.data?.domain?.domain;
 
   return (
     <div>
@@ -33,7 +42,7 @@ export function Emails() {
         title="E-mails Profissionais"
         subtitle="Gerencie seus e-mails corporativos"
         action={
-          <Button>
+          <Button onClick={() => setIsRequestModalOpen(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Solicitar E-mail
           </Button>
@@ -70,7 +79,18 @@ export function Emails() {
             </TableHeader>
             <TableBody>
               {emails.map((email) => (
-                <TableRow key={email.id}>
+                <TableRow
+                  key={email.id}
+                  className={`${
+                    email.status === 'ativo' ? 'cursor-pointer hover:bg-gray-50 transition-colors' : ''
+                  }`}
+                  onClick={() => {
+                    if (email.status === 'ativo') {
+                      setSelectedEmail(email);
+                      setIsAccessModalOpen(true);
+                    }
+                  }}
+                >
                   <TableCell>
                     <span className="font-mono text-sm">{email.email}</span>
                   </TableCell>
@@ -81,11 +101,9 @@ export function Emails() {
                     {new Date(email.created_at).toLocaleDateString('pt-BR')}
                   </TableCell>
                   <TableCell>
-                    {email.status === 'ativo' && (
-                      <Button size="sm" variant="ghost">
-                        Configurar
-                      </Button>
-                    )}
+                    {email.status === 'ativo' ? (
+                      <span className="text-xs text-gray-400">Clique para ver detalhes</span>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -97,7 +115,7 @@ export function Emails() {
             title="Nenhum e-mail configurado"
             description="Solicite a criação do seu primeiro e-mail profissional"
             action={
-              <Button>
+              <Button onClick={() => setIsRequestModalOpen(true)}>
                 <Plus className="w-4 h-4 mr-2" />
                 Solicitar E-mail
               </Button>
@@ -106,23 +124,21 @@ export function Emails() {
         )}
       </Card>
 
-      {/* Card: Como Configurar */}
-      <Card className="mt-6">
-        <h4 className="font-semibold text-dark mb-3">📧 Como configurar meu e-mail?</h4>
-        <div className="space-y-2 text-sm text-gray-600">
-          <p>
-            Após a aprovação do seu e-mail, você receberá as credenciais e instruções de configuração.
-          </p>
-          <p>
-            Você poderá acessar seus e-mails através de:
-          </p>
-          <ul className="list-disc list-inside ml-4 space-y-1">
-            <li>Webmail (acesso pelo navegador)</li>
-            <li>Cliente de e-mail (Outlook, Gmail, Apple Mail, etc.)</li>
-            <li>Aplicativo de celular</li>
-          </ul>
-        </div>
-      </Card>
+      {/* Modal de Solicitação de E-mail */}
+      <RequestEmailModal
+        isOpen={isRequestModalOpen}
+        onClose={() => setIsRequestModalOpen(false)}
+      />
+
+      {/* Modal de Acesso ao E-mail (Observações) */}
+      <EmailAccessModal
+        isOpen={isAccessModalOpen}
+        onClose={() => {
+          setIsAccessModalOpen(false);
+          setSelectedEmail(null);
+        }}
+        email={selectedEmail}
+      />
     </div>
   );
 }

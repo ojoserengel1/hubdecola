@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../config/supabase';
 import { AuthRequest, authenticate, requireAdmin } from '../middleware/auth';
-import { UpdateSiteStatusRequest, UpdatePipelineRequest } from '@decolaweb/shared';
+import { UpdateSiteStatusRequest, UpdatePipelineRequest, CreateSiteStatusTemplateRequest, UpdateSiteStatusTemplateRequest, ReorderSiteStatusTemplatesRequest, CreatePlanRequest, UpdatePlanRequest } from '@decolaweb/shared';
 
 const router = Router();
 
@@ -14,22 +14,24 @@ router.use(authenticate, requireAdmin);
  */
 router.get('/clients', async (req: AuthRequest, res) => {
   try {
-    // Busca todos os clientes
-    // Nota: deleted_at será filtrado quando a migration for aplicada
-    // Por enquanto busca todos os clientes
+    // Busca todos os clientes primeiro sem joins complexos
     const { data: clients, error } = await supabaseAdmin
       .from('profiles')
-      .select(`
-        *,
-        subscription:subscriptions(*, plan:plans(*)),
-        site_status(*)
-      `)
+      .select('*')
       .eq('role', 'client')
       .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Erro ao buscar clientes:', error);
+      console.error('Detalhes do erro:', JSON.stringify(error, null, 2));
       throw error;
+    }
+
+    if (!clients || clients.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+      });
     }
 
     // Filtra clientes excluídos manualmente (se deleted_at existir)
@@ -40,16 +42,83 @@ router.get('/clients', async (req: AuthRequest, res) => {
       return !client.deleted_at;
     });
 
-    // Garantir que todos os clientes tenham email (buscar do auth se necessário)
+    // Buscar subscriptions e plans separadamente para cada cliente
     activeClients = await Promise.all(
       activeClients.map(async (client: any) => {
-        if (!client.email) {
-          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(client.id);
-          if (authUser?.user?.email) {
-            client.email = authUser.user.email;
+        try {
+          // Buscar email do auth se não tiver
+          if (!client.email) {
+            try {
+              const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(client.id);
+              if (authUser?.user?.email) {
+                client.email = authUser.user.email;
+              }
+            } catch (authError: any) {
+              console.warn(`Erro ao buscar email do auth para cliente ${client.id}:`, authError.message);
+            }
           }
+
+          // Buscar subscriptions do cliente
+          try {
+            const { data: subscriptions } = await supabaseAdmin
+              .from('subscriptions')
+              .select('*, plan:plans(*)')
+              .eq('user_id', client.id)
+              .order('created_at', { ascending: false });
+
+            if (subscriptions && subscriptions.length > 0) {
+              // Pega a subscription ativa ou a mais recente
+              const activeSubscription = subscriptions.find((s: any) => s.status === 'ativa') || subscriptions[0];
+              client.subscription = activeSubscription;
+              if (activeSubscription?.plan) {
+                client.plan = activeSubscription.plan;
+              }
+            }
+          } catch (subError: any) {
+            console.warn(`Erro ao buscar subscriptions para cliente ${client.id}:`, subError.message);
+          }
+
+          // Se não tiver plano na subscription mas tiver plan_id no profile, buscar o plano
+          if (!client.plan && client.plan_id) {
+            try {
+              const { data: plan, error: planError } = await supabaseAdmin
+                .from('plans')
+                .select('*')
+                .eq('id', client.plan_id)
+                .single();
+              
+              if (planError) {
+                console.warn(`Erro ao buscar plano ${client.plan_id} para cliente ${client.id}:`, planError.message);
+              } else if (plan) {
+                client.plan = plan;
+              }
+            } catch (planError: any) {
+              console.warn(`Erro ao buscar plano para cliente ${client.id}:`, planError.message);
+            }
+          }
+
+          // Buscar site_status
+          try {
+            const { data: siteStatus } = await supabaseAdmin
+              .from('site_status')
+              .select('*')
+              .eq('user_id', client.id)
+              .order('updated_at', { ascending: false })
+              .limit(1);
+            
+            if (siteStatus && siteStatus.length > 0) {
+              client.site_status = siteStatus;
+            }
+          } catch (statusError: any) {
+            console.warn(`Erro ao buscar site_status para cliente ${client.id}:`, statusError.message);
+          }
+
+          return client;
+        } catch (clientError: any) {
+          console.error(`Erro ao processar cliente ${client.id}:`, clientError.message);
+          // Retorna o cliente mesmo com erro, para não quebrar a lista toda
+          return client;
         }
-        return client;
       })
     );
 
@@ -59,9 +128,11 @@ router.get('/clients', async (req: AuthRequest, res) => {
     });
   } catch (error: any) {
     console.error('Erro ao buscar clientes:', error);
+    console.error('Stack trace:', error.stack);
     return res.status(500).json({
       success: false,
       error: error.message || 'Erro ao buscar clientes',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 });
@@ -222,12 +293,28 @@ router.put('/clients/:id', async (req: AuthRequest, res) => {
 router.put('/clients/:id/site-status', async (req: AuthRequest, res) => {
   try {
     const clientId = req.params.id;
-    const { status, notes }: UpdateSiteStatusRequest = req.body;
+    const { status, notes, preview_url, live_url }: UpdateSiteStatusRequest = req.body;
 
     if (!status) {
       return res.status(400).json({
         success: false,
         error: 'Status é obrigatório',
+      });
+    }
+
+    // Valida status
+    const validStatuses = [
+      'aguardando_preenchimento',
+      'briefing_enviado',
+      'em_producao',
+      'em_aprovacao',
+      'site_publicado',
+      'aguardando_briefing', // Compatibilidade
+    ];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Status inválido. Use: ${validStatuses.join(', ')}`,
       });
     }
 
@@ -238,16 +325,21 @@ router.put('/clients/:id/site-status', async (req: AuthRequest, res) => {
       .eq('user_id', clientId)
       .single();
 
+    const updateData: any = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (notes !== undefined) updateData.notes = notes;
+    if (preview_url !== undefined) updateData.preview_url = preview_url;
+    if (live_url !== undefined) updateData.live_url = live_url;
+
     let result;
 
     if (existing) {
       result = await supabaseAdmin
         .from('site_status')
-        .update({
-          status,
-          notes,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updateData)
         .eq('user_id', clientId)
         .select()
         .single();
@@ -256,8 +348,7 @@ router.put('/clients/:id/site-status', async (req: AuthRequest, res) => {
         .from('site_status')
         .insert({
           user_id: clientId,
-          status,
-          notes,
+          ...updateData,
         })
         .select()
         .single();
@@ -353,61 +444,115 @@ router.get('/pipeline', async (req: AuthRequest, res) => {
 router.put('/pipeline/:userId', async (req: AuthRequest, res) => {
   try {
     const userId = req.params.userId;
-    const { stage, notes }: UpdatePipelineRequest = req.body;
+    const { stage, notes } = req.body;
+
+    console.log('📥 [API] Recebendo atualização de pipeline:', {
+      userId,
+      stage,
+      notes,
+      body: req.body,
+    });
 
     if (!stage) {
+      console.error('❌ [API] Stage não fornecido');
       return res.status(400).json({
         success: false,
         error: 'Estágio é obrigatório',
       });
     }
 
+    // Valida se o stage existe na tabela pipeline_stages (se a tabela existir)
+    const stageStr = String(stage);
+    
+    // Tenta buscar na tabela pipeline_stages (pode não existir ainda)
+    const { data: stageExists, error: stageCheckError } = await supabaseAdmin
+      .from('pipeline_stages')
+      .select('slug, is_active')
+      .eq('slug', stageStr)
+      .single();
+
+    // Se a tabela existe e encontrou o stage, valida se está ativo
+    if (!stageCheckError && stageExists) {
+      if (!stageExists.is_active) {
+        console.error('❌ [API] Stage inativo:', stageStr);
+        return res.status(400).json({
+          success: false,
+          error: `Estágio "${stageStr}" está inativo`,
+        });
+      }
+    } else if (!stageCheckError && !stageExists) {
+      // Tabela existe mas stage não encontrado - permite valores do enum antigo como fallback
+      const validEnumStages = ['aguardando_briefing', 'copy', 'design', 'web', 'infraestrutura', 'dominio'];
+      if (!validEnumStages.includes(stageStr)) {
+        console.warn('⚠️ [API] Stage não encontrado na tabela pipeline_stages:', stageStr);
+        // Permite continuar mesmo assim (a constraint foi removida)
+      }
+    }
+    // Se stageCheckError existe, a tabela pipeline_stages não existe ainda - permite qualquer valor
+
     // Verifica se já existe
-    const { data: existing } = await supabaseAdmin
+    const { data: existing, error: existingError } = await supabaseAdmin
       .from('production_pipeline')
       .select('id')
       .eq('user_id', userId)
       .single();
 
+    if (existingError && existingError.code !== 'PGRST116') {
+      console.error('❌ [API] Erro ao verificar pipeline existente:', existingError);
+      throw existingError;
+    }
+
     let result;
 
     if (existing) {
+      console.log('🔄 [API] Atualizando pipeline existente');
       result = await supabaseAdmin
         .from('production_pipeline')
         .update({
-          stage,
-          notes,
+          stage: String(stage), // Garante que é string
+          notes: notes || null,
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', userId)
         .select()
         .single();
     } else {
+      console.log('➕ [API] Criando novo registro de pipeline');
       result = await supabaseAdmin
         .from('production_pipeline')
         .insert({
           user_id: userId,
-          stage,
-          notes,
+          stage: String(stage), // Garante que é string
+          notes: notes || null,
         })
         .select()
         .single();
     }
 
     if (result.error) {
+      console.error('❌ [API] Erro do Supabase:', result.error);
       throw result.error;
     }
+
+    console.log('✅ [API] Pipeline atualizado com sucesso:', result.data);
 
     return res.json({
       success: true,
       data: result.data,
       message: 'Pipeline atualizado com sucesso',
     });
-  } catch (error) {
-    console.error('Erro ao atualizar pipeline:', error);
+  } catch (error: any) {
+    console.error('🔥 [API] Erro ao atualizar pipeline:', error);
+    console.error('🔥 [API] Detalhes do erro:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     return res.status(500).json({
       success: false,
-      error: 'Erro ao atualizar pipeline',
+      error: error.message || 'Erro ao atualizar pipeline',
+      details: process.env.NODE_ENV === 'development' ? error.details : undefined,
     });
   }
 });
@@ -653,7 +798,7 @@ router.delete('/pipeline/stages/:id', async (req: AuthRequest, res) => {
  */
 router.get('/tickets', async (req: AuthRequest, res) => {
   try {
-    const { status, priority } = req.query;
+    const { status } = req.query;
 
     // Busca tickets com perfil do usuário
     let query = supabaseAdmin
@@ -668,10 +813,6 @@ router.get('/tickets', async (req: AuthRequest, res) => {
       query = query.eq('status', status);
     }
 
-    if (priority) {
-      query = query.eq('priority', priority);
-    }
-
     const { data: tickets, error } = await query;
 
     if (error) {
@@ -684,10 +825,6 @@ router.get('/tickets', async (req: AuthRequest, res) => {
 
       if (status) {
         fallbackQuery = fallbackQuery.eq('status', status);
-      }
-
-      if (priority) {
-        fallbackQuery = fallbackQuery.eq('priority', priority);
       }
 
       const { data: fallbackTickets, error: fallbackError } = await fallbackQuery;
@@ -732,6 +869,232 @@ router.get('/tickets', async (req: AuthRequest, res) => {
     return res.status(500).json({
       success: false,
       error: error.message || 'Erro ao buscar tickets',
+    });
+  }
+});
+
+/**
+ * GET /admin/tickets/:id
+ * Retorna detalhes de um ticket específico (admin)
+ */
+router.get('/tickets/:id', async (req: AuthRequest, res) => {
+  try {
+    const ticketId = req.params.id;
+    console.log('🔍 [ADMIN] Buscando ticket:', ticketId);
+
+    // Busca o ticket primeiro
+    const { data: ticketData, error: ticketError } = await supabaseAdmin
+      .from('support_tickets')
+      .select('*')
+      .eq('id', ticketId)
+      .single();
+
+    if (ticketError || !ticketData) {
+      console.error('❌ [ADMIN] Ticket não encontrado:', {
+        ticketId,
+        error: ticketError?.message,
+        code: ticketError?.code,
+      });
+      return res.status(404).json({
+        success: false,
+        error: 'Ticket não encontrado',
+      });
+    }
+
+    // Busca o perfil do usuário separadamente
+    let userProfile: any = null;
+    if (ticketData.user_id) {
+      console.log('🔍 [ADMIN] Buscando perfil do usuário:', ticketData.user_id);
+      
+      // Primeiro tenta buscar todos os campos do perfil
+      const { data: profile, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('*')
+        .eq('id', ticketData.user_id)
+        .single();
+
+      if (profileError) {
+        console.warn('⚠️ [ADMIN] Erro ao buscar perfil:', profileError.message);
+        console.warn('⚠️ [ADMIN] Detalhes do erro:', JSON.stringify(profileError, null, 2));
+        
+        // Tenta buscar do auth.users como fallback
+        try {
+          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(ticketData.user_id);
+          if (authUser?.user) {
+            userProfile = {
+              id: ticketData.user_id,
+              name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'N/A',
+              company_name: authUser.user.user_metadata?.company_name || null,
+              email: authUser.user.email || null,
+            };
+            console.log('✅ [ADMIN] Perfil obtido do auth.users:', userProfile);
+          } else {
+            // Se não encontrou no auth.users também, cria um objeto mínimo com o user_id
+            userProfile = {
+              id: ticketData.user_id,
+              name: null,
+              company_name: null,
+              email: null,
+            };
+          }
+        } catch (authError: any) {
+          console.error('❌ [ADMIN] Erro ao buscar do auth.users:', authError.message);
+          // Cria um objeto mínimo com o user_id mesmo em caso de erro
+          userProfile = {
+            id: ticketData.user_id,
+            name: null,
+            company_name: null,
+            email: null,
+          };
+        }
+      } else if (profile) {
+        userProfile = {
+          id: profile.id,
+          name: profile.name,
+          company_name: profile.company_name,
+          email: profile.email,
+        };
+        console.log('✅ [ADMIN] Perfil encontrado:', JSON.stringify(userProfile, null, 2));
+        console.log('📊 [ADMIN] Company Name:', userProfile.company_name);
+        console.log('📊 [ADMIN] Name:', userProfile.name);
+        console.log('📊 [ADMIN] Raw Profile:', JSON.stringify(profile, null, 2));
+      } else {
+        console.warn('⚠️ [ADMIN] Perfil não encontrado, mas não houve erro');
+        // Se não encontrou perfil mas não houve erro, tenta buscar do auth.users
+        try {
+          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(ticketData.user_id);
+          if (authUser?.user) {
+            userProfile = {
+              id: ticketData.user_id,
+              name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'N/A',
+              company_name: authUser.user.user_metadata?.company_name || null,
+              email: authUser.user.email || null,
+            };
+            console.log('✅ [ADMIN] Perfil obtido do auth.users (fallback):', userProfile);
+          } else {
+            userProfile = {
+              id: ticketData.user_id,
+              name: null,
+              company_name: null,
+              email: null,
+            };
+          }
+        } catch (authError: any) {
+          console.error('❌ [ADMIN] Erro ao buscar do auth.users:', authError.message);
+          userProfile = {
+            id: ticketData.user_id,
+            name: null,
+            company_name: null,
+            email: null,
+          };
+        }
+      }
+    }
+
+    // Monta o ticket com o perfil do usuário (sempre retorna user, mesmo que seja mínimo)
+    const ticket = {
+      ...ticketData,
+      user: userProfile,
+    };
+
+    console.log('✅ [ADMIN] Ticket encontrado:', ticket?.id);
+    console.log('📊 [ADMIN] User Profile Final:', userProfile);
+    console.log('📊 [ADMIN] Company Name Final:', userProfile?.company_name);
+    console.log('📊 [ADMIN] Name Final:', userProfile?.name);
+    return res.json({
+      success: true,
+      data: ticket,
+    });
+  } catch (error: any) {
+    console.error('❌ [ADMIN] Erro ao buscar ticket:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao buscar ticket',
+    });
+  }
+});
+
+/**
+ * GET /admin/tickets/:id/messages
+ * Retorna todas as mensagens de um ticket (admin)
+ */
+router.get('/tickets/:id/messages', async (req: AuthRequest, res) => {
+  try {
+    const ticketId = req.params.id;
+
+    const { data: messages, error } = await supabaseAdmin
+      .from('support_messages')
+      .select('*')
+      .eq('ticket_id', ticketId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: messages || [],
+    });
+  } catch (error) {
+    console.error('Erro ao buscar mensagens:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao buscar mensagens',
+    });
+  }
+});
+
+/**
+ * PUT /admin/tickets/:id/status
+ * Atualiza o status de um ticket
+ */
+router.put('/tickets/:id/status', async (req: AuthRequest, res) => {
+  try {
+    const ticketId = req.params.id;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status é obrigatório',
+      });
+    }
+
+    // Valida status
+    const validStatuses = ['aberto', 'em_andamento', 'respondido', 'fechado'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status inválido',
+      });
+    }
+
+    const { data: ticket, error } = await supabaseAdmin
+      .from('support_tickets')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', ticketId)
+      .select()
+      .single();
+
+    if (error || !ticket) {
+      console.error('Erro ao atualizar status do ticket:', error);
+      return res.status(404).json({
+        success: false,
+        error: 'Ticket não encontrado',
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: ticket,
+      message: 'Status atualizado com sucesso',
+    });
+  } catch (error: any) {
+    console.error('Erro ao atualizar status do ticket:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao atualizar status do ticket',
     });
   }
 });
@@ -851,7 +1214,6 @@ router.post('/clients', async (req: AuthRequest, res) => {
         role: 'client',
         name,
         company_name,
-        email, // Adicionar email ao perfil
         whatsapp: whatsapp || null,
         plan_id: finalPlanId,
       })
@@ -1116,6 +1478,609 @@ router.get('/financeiro', async (req: AuthRequest, res) => {
     return res.status(500).json({
       success: false,
       error: error.message || 'Erro ao buscar dados financeiros',
+    });
+  }
+});
+
+/**
+ * GET /admin/emails
+ * Lista todos os e-mails profissionais de todos os clientes
+ */
+router.get('/emails', async (req: AuthRequest, res) => {
+  try {
+    // Busca todos os e-mails
+    const { data: emails, error: emailsError } = await supabaseAdmin
+      .from('emails_profissionais')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (emailsError) {
+      console.error('Erro ao buscar e-mails:', emailsError);
+      throw emailsError;
+    }
+
+    // Para cada e-mail, busca informações do cliente
+    const emailsWithClient = await Promise.all(
+      (emails || []).map(async (email: any) => {
+        // Busca perfil do cliente
+        const { data: profile } = await supabaseAdmin
+          .from('profiles')
+          .select('id, name, company_name')
+          .eq('id', email.user_id)
+          .single();
+
+        // Busca email do auth.users
+        let clientEmail = null;
+        if (profile) {
+          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(profile.id);
+          if (authUser?.user?.email) {
+            clientEmail = authUser.user.email;
+          }
+        }
+
+        return {
+          ...email,
+          profile: profile
+            ? {
+                id: profile.id,
+                name: profile.name,
+                company_name: profile.company_name,
+                email: clientEmail,
+              }
+            : null,
+        };
+      })
+    );
+
+    return res.json({
+      success: true,
+      data: emailsWithClient,
+    });
+  } catch (error: any) {
+    console.error('Erro ao buscar e-mails:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao buscar e-mails',
+    });
+  }
+});
+
+/**
+ * PUT /admin/clients/:id/domain/status
+ * Atualiza o status do domínio de um cliente
+ */
+router.put('/clients/:id/domain/status', async (req: AuthRequest, res) => {
+  try {
+    const clientId = req.params.id;
+    const { status, domain: newDomain } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status é obrigatório',
+      });
+    }
+
+    // Valida status
+    const validStatuses = ['pendente', 'aguardando_dns', 'configurando', 'ativo'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Status inválido. Use: ${validStatuses.join(', ')}`,
+      });
+    }
+
+    // Verifica se já existe um domínio para este cliente
+    const { data: existing } = await supabaseAdmin
+      .from('domains')
+      .select('id')
+      .eq('user_id', clientId)
+      .single();
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Domínio não encontrado para este cliente',
+      });
+    }
+
+    // Atualiza o status e/ou o domínio
+    const updateData: any = {
+      status,
+    };
+
+    // Se um novo domínio foi fornecido, atualiza
+    if (newDomain !== undefined && newDomain !== null && newDomain.trim() !== '') {
+      updateData.domain = newDomain.trim().toLowerCase();
+    }
+
+    // Só adiciona updated_at se a coluna existir (para compatibilidade)
+    // O trigger cuidará disso automaticamente se existir
+    const { data: updatedDomain, error } = await supabaseAdmin
+      .from('domains')
+      .update(updateData)
+      .eq('user_id', clientId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Erro ao atualizar status do domínio:', error);
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: updatedDomain,
+      message: 'Status do domínio atualizado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao atualizar status do domínio:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao atualizar status do domínio',
+    });
+  }
+});
+
+// ==================== SITE STATUS TEMPLATES ====================
+
+/**
+ * GET /admin/site-status-templates
+ * Lista todos os templates de status do site
+ */
+router.get('/site-status-templates', async (req: AuthRequest, res) => {
+  try {
+    const { data: templates, error } = await supabaseAdmin
+      .from('site_status_templates')
+      .select('*')
+      .order('display_order', { ascending: true });
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: templates || [],
+    });
+  } catch (error: any) {
+    console.error('Erro ao buscar templates de status:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao buscar templates de status',
+    });
+  }
+});
+
+/**
+ * POST /admin/site-status-templates
+ * Cria um novo template de status
+ */
+router.post('/site-status-templates', async (req: AuthRequest, res) => {
+  try {
+    const templateData: CreateSiteStatusTemplateRequest = req.body;
+
+    // Validações
+    if (!templateData.slug || !templateData.name || !templateData.headline) {
+      return res.status(400).json({
+        success: false,
+        error: 'Slug, name e headline são obrigatórios',
+      });
+    }
+
+    // Verifica se o slug já existe
+    const { data: existing } = await supabaseAdmin
+      .from('site_status_templates')
+      .select('id')
+      .eq('slug', templateData.slug)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        error: 'Já existe um template com este slug',
+      });
+    }
+
+    // Se não forneceu display_order, pega o próximo
+    if (templateData.display_order === undefined) {
+      const { data: lastTemplate } = await supabaseAdmin
+        .from('site_status_templates')
+        .select('display_order')
+        .order('display_order', { ascending: false })
+        .limit(1)
+        .single();
+
+      templateData.display_order = (lastTemplate?.display_order || 0) + 1;
+    }
+
+    const { data: newTemplate, error } = await supabaseAdmin
+      .from('site_status_templates')
+      .insert({
+        slug: templateData.slug,
+        name: templateData.name,
+        headline: templateData.headline,
+        subheadline: templateData.subheadline || null,
+        color_scheme: templateData.color_scheme || 'gray',
+        display_order: templateData.display_order || 0,
+        is_active: templateData.is_active !== undefined ? templateData.is_active : true,
+        buttons: templateData.buttons || [],
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: newTemplate,
+      message: 'Template criado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao criar template de status:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao criar template de status',
+    });
+  }
+});
+
+/**
+ * PUT /admin/site-status-templates/:id
+ * Atualiza um template de status
+ */
+router.put('/site-status-templates/:id', async (req: AuthRequest, res) => {
+  try {
+    const templateId = req.params.id;
+    const updateData: UpdateSiteStatusTemplateRequest = req.body;
+
+    const updateFields: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (updateData.name !== undefined) updateFields.name = updateData.name;
+    if (updateData.headline !== undefined) updateFields.headline = updateData.headline;
+    if (updateData.subheadline !== undefined) updateFields.subheadline = updateData.subheadline;
+    if (updateData.color_scheme !== undefined) updateFields.color_scheme = updateData.color_scheme;
+    if (updateData.display_order !== undefined) updateFields.display_order = updateData.display_order;
+    if (updateData.is_active !== undefined) updateFields.is_active = updateData.is_active;
+    if (updateData.buttons !== undefined) updateFields.buttons = updateData.buttons;
+
+    const { data: updatedTemplate, error } = await supabaseAdmin
+      .from('site_status_templates')
+      .update(updateFields)
+      .eq('id', templateId)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!updatedTemplate) {
+      return res.status(404).json({
+        success: false,
+        error: 'Template não encontrado',
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: updatedTemplate,
+      message: 'Template atualizado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao atualizar template de status:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao atualizar template de status',
+    });
+  }
+});
+
+/**
+ * PUT /admin/site-status-templates/reorder
+ * Reordena os templates de status
+ */
+router.put('/site-status-templates/reorder', async (req: AuthRequest, res) => {
+  try {
+    const { templates }: ReorderSiteStatusTemplatesRequest = req.body;
+
+    if (!templates || !Array.isArray(templates)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Lista de templates é obrigatória',
+      });
+    }
+
+    // Atualiza cada template
+    const updates = templates.map(({ id, display_order }) =>
+      supabaseAdmin
+        .from('site_status_templates')
+        .update({ display_order, updated_at: new Date().toISOString() })
+        .eq('id', id)
+    );
+
+    await Promise.all(updates);
+
+    return res.json({
+      success: true,
+      message: 'Ordem dos templates atualizada com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao reordenar templates:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao reordenar templates',
+    });
+  }
+});
+
+/**
+ * DELETE /admin/site-status-templates/:id
+ * Deleta um template de status
+ */
+router.delete('/site-status-templates/:id', async (req: AuthRequest, res) => {
+  try {
+    const templateId = req.params.id;
+
+    const { error } = await supabaseAdmin
+      .from('site_status_templates')
+      .delete()
+      .eq('id', templateId);
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      message: 'Template deletado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao deletar template:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao deletar template',
+    });
+  }
+});
+
+// ==================== PLANS ====================
+
+/**
+ * GET /admin/plans
+ * Lista todos os planos
+ */
+router.get('/plans', async (req: AuthRequest, res) => {
+  try {
+    const { data: plans, error } = await supabaseAdmin
+      .from('plans')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: plans || [],
+    });
+  } catch (error: any) {
+    console.error('Erro ao buscar planos:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao buscar planos',
+    });
+  }
+});
+
+/**
+ * GET /admin/plans/:id
+ * Busca um plano específico
+ */
+router.get('/plans/:id', async (req: AuthRequest, res) => {
+  try {
+    const planId = req.params.id;
+
+    const { data: plan, error } = await supabaseAdmin
+      .from('plans')
+      .select('*')
+      .eq('id', planId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({
+          success: false,
+          error: 'Plano não encontrado',
+        });
+      }
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: plan,
+    });
+  } catch (error: any) {
+    console.error('Erro ao buscar plano:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao buscar plano',
+    });
+  }
+});
+
+/**
+ * POST /admin/plans
+ * Cria um novo plano
+ */
+router.post('/plans', async (req: AuthRequest, res) => {
+  try {
+    const planData: CreatePlanRequest = req.body;
+
+    // Validações
+    if (!planData.name || !planData.price_monthly) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nome e preço mensal são obrigatórios',
+      });
+    }
+
+    if (planData.price_monthly < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'O preço mensal deve ser maior ou igual a zero',
+      });
+    }
+
+    const { data: newPlan, error } = await supabaseAdmin
+      .from('plans')
+      .insert({
+        name: planData.name,
+        price_monthly: planData.price_monthly,
+        description: planData.description || null,
+        is_active: planData.is_active !== undefined ? planData.is_active : true,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: newPlan,
+      message: 'Plano criado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao criar plano:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao criar plano',
+    });
+  }
+});
+
+/**
+ * PUT /admin/plans/:id
+ * Atualiza um plano
+ */
+router.put('/plans/:id', async (req: AuthRequest, res) => {
+  try {
+    const planId = req.params.id;
+    const updateData: UpdatePlanRequest = req.body;
+
+    // Validações
+    if (updateData.price_monthly !== undefined && updateData.price_monthly < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'O preço mensal deve ser maior ou igual a zero',
+      });
+    }
+
+    const updateFields: any = {};
+
+    if (updateData.name !== undefined) updateFields.name = updateData.name;
+    if (updateData.price_monthly !== undefined) updateFields.price_monthly = updateData.price_monthly;
+    if (updateData.description !== undefined) updateFields.description = updateData.description || null;
+    if (updateData.is_active !== undefined) updateFields.is_active = updateData.is_active;
+
+    const { data: updatedPlan, error } = await supabaseAdmin
+      .from('plans')
+      .update(updateFields)
+      .eq('id', planId)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({
+          success: false,
+          error: 'Plano não encontrado',
+        });
+      }
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      data: updatedPlan,
+      message: 'Plano atualizado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao atualizar plano:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao atualizar plano',
+    });
+  }
+});
+
+/**
+ * DELETE /admin/plans/:id
+ * Deleta um plano (soft delete - desativa)
+ */
+router.delete('/plans/:id', async (req: AuthRequest, res) => {
+  try {
+    const planId = req.params.id;
+
+    // Verifica se há assinaturas ativas usando este plano
+    const { data: activeSubscriptions, error: checkError } = await supabaseAdmin
+      .from('subscriptions')
+      .select('id')
+      .eq('plan_id', planId)
+      .eq('status', 'ativa')
+      .limit(1);
+
+    if (checkError) {
+      throw checkError;
+    }
+
+    if (activeSubscriptions && activeSubscriptions.length > 0) {
+      // Se há assinaturas ativas, apenas desativa o plano
+      const { data: updatedPlan, error } = await supabaseAdmin
+        .from('plans')
+        .update({ is_active: false })
+        .eq('id', planId)
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      return res.json({
+        success: true,
+        data: updatedPlan,
+        message: 'Plano desativado com sucesso (há assinaturas ativas usando este plano)',
+      });
+    }
+
+    // Se não há assinaturas ativas, pode deletar
+    const { error } = await supabaseAdmin
+      .from('plans')
+      .delete()
+      .eq('id', planId);
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      message: 'Plano deletado com sucesso!',
+    });
+  } catch (error: any) {
+    console.error('Erro ao deletar plano:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao deletar plano',
     });
   }
 });

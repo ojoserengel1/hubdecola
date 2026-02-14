@@ -1,23 +1,138 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAdminClientById } from '@/lib/api';
-import { Card, PageHeader, Loading, StatusBadge, Button, Badge } from '@/components/ui';
-import { ArrowLeft, Mail, Phone, Calendar, Edit, FileText, Globe, AtSign, MessageSquare, CheckCircle, AlertCircle } from 'lucide-react';
+import { getAdminClientById, getChatConversations, getChatMessages, sendChatMessage, markChatMessagesAsRead, updateDomainStatus, updateClientSiteStatus } from '@/lib/api';
+import { Card, PageHeader, Loading, StatusBadge, Button, Badge, Input } from '@/components/ui';
+import { ArrowLeft, Mail, Phone, Calendar, Edit, FileText, Globe, AtSign, MessageSquare, CheckCircle, AlertCircle, Building2, Palette, Download, Send, User } from 'lucide-react';
 import { EditClientModal } from '@/components/admin/EditClientModal';
+import { BriefingReadOnly } from '@/components/admin/BriefingReadOnly';
+import { exportBriefingToPDF } from '@/utils/exportBriefingPDF';
+import { UpdateEmailStatusModal } from '@/components/admin/UpdateEmailStatusModal';
+import { UpdateSiteStatusModal } from '@/components/admin/UpdateSiteStatusModal';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRef, useEffect } from 'react';
+import type { ChatConversation, ChatMessage, EmailProfessional } from '@decolaweb/shared';
+import { useAuthStore } from '@/store/authStore';
+import { toast } from 'sonner';
 
 export function ClienteDetalhe() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'resumo' | 'briefing' | 'pagamentos' | 'tickets' | 'contrato' | 'dominio' | 'emails'>('resumo');
+  const [activeTab, setActiveTab] = useState<'resumo' | 'briefing' | 'pagamentos' | 'tickets' | 'contrato' | 'dominio' | 'emails' | 'chat'>('resumo');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isEmailStatusModalOpen, setIsEmailStatusModalOpen] = useState(false);
+  const [isSiteStatusModalOpen, setIsSiteStatusModalOpen] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState<EmailProfessional | null>(null);
+  const [message, setMessage] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const user = useAuthStore((state) => state.user);
+  const queryClient = useQueryClient();
 
+  // Estado para o domínio aprovado
+  const [approvedDomain, setApprovedDomain] = useState('');
+
+  // Mutation para atualizar status do domínio
+  const updateDomainStatusMutation = useMutation({
+    mutationFn: ({ status, domain }: { status: string; domain?: string }) => 
+      updateDomainStatus(id!, status, domain),
+    onSuccess: () => {
+      toast.success('Domínio atualizado com sucesso!');
+      queryClient.invalidateQueries({ queryKey: ['admin-client', id] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Erro ao atualizar domínio');
+    },
+  });
+
+  // Mutation para atualizar status do site
+  const updateSiteStatusMutation = useMutation({
+    mutationFn: (data: { status: string; notes?: string; preview_url?: string; live_url?: string }) => 
+      updateClientSiteStatus(id!, data),
+    onSuccess: () => {
+      toast.success('Status do site atualizado com sucesso!');
+      queryClient.invalidateQueries({ queryKey: ['admin-client', id] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Erro ao atualizar status do site');
+    },
+  });
+
+  // TODOS OS HOOKS DEVEM SER CHAMADOS ANTES DE QUALQUER EARLY RETURN
   const { data, isLoading } = useQuery({
     queryKey: ['admin-client', id],
     queryFn: () => getAdminClientById(id!),
     enabled: !!id,
   });
 
+  // Atualiza o estado do domínio aprovado quando os dados são carregados
+  useEffect(() => {
+    const domainData = data?.data?.domain;
+    if (domainData?.domain) {
+      setApprovedDomain(domainData.domain);
+    } else {
+      setApprovedDomain('');
+    }
+  }, [data]);
+
+  // Busca conversa do cliente (sempre chamado, mas só executa quando necessário)
+  const { data: conversationsData } = useQuery({
+    queryKey: ['chat-conversations'],
+    queryFn: getChatConversations,
+    enabled: activeTab === 'chat' && !!id,
+    refetchInterval: 10000,
+    staleTime: 5000,
+  });
+
+  const clientConversation = conversationsData?.data?.find(
+    (conv: ChatConversation) => conv.user_id === id
+  ) || null;
+
+  // Busca mensagens da conversa (sempre chamado, mas só executa quando necessário)
+  const { data: messagesData } = useQuery({
+    queryKey: ['chat-messages', clientConversation?.id],
+    queryFn: () => getChatMessages(clientConversation!.id),
+    enabled: !!clientConversation?.id && activeTab === 'chat',
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
+    staleTime: 3000,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const messages = messagesData?.data || [];
+
+  const sendMutation = useMutation({
+    mutationFn: (msg: string) => sendChatMessage(clientConversation!.id, msg),
+    onSuccess: () => {
+      setMessage('');
+      queryClient.invalidateQueries({ queryKey: ['chat-messages', clientConversation?.id] });
+      queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+    },
+  });
+
+  // Scroll para o final quando novas mensagens chegarem
+  useEffect(() => {
+    if (activeTab === 'chat') {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, activeTab]);
+
+  // Marca mensagens como lidas quando a aba é aberta
+  useEffect(() => {
+    if (activeTab === 'chat' && messages.length > 0 && clientConversation?.id) {
+      const unreadMessages = messages.filter(
+        (msg: ChatMessage) => !msg.is_read && msg.sender_type === 'client'
+      );
+      if (unreadMessages.length > 0) {
+        markChatMessagesAsRead(clientConversation.id).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+        });
+      }
+    }
+  }, [activeTab, messages.length, clientConversation?.id, queryClient]);
+
+  // AGORA SIM, PODEMOS FAZER EARLY RETURNS
   if (isLoading) return <Loading />;
 
   const clientData = data?.data;
@@ -26,7 +141,14 @@ export function ClienteDetalhe() {
     return <div>Cliente não encontrado</div>;
   }
 
-  const { profile, subscription, siteStatus, briefing, invoices, emails, domain, tickets, pipeline, contract } = clientData;
+  const { profile, subscription, siteStatus, briefing, invoices, emails, domain, tickets, contract } = clientData;
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (message.trim() && !sendMutation.isPending && clientConversation?.id) {
+      sendMutation.mutate(message.trim());
+    }
+  };
 
   const tabs = [
     { id: 'resumo', label: 'Resumo Geral' },
@@ -36,6 +158,7 @@ export function ClienteDetalhe() {
     { id: 'dominio', label: 'Domínio' },
     { id: 'emails', label: `E-mails (${emails?.length || 0})` },
     { id: 'tickets', label: `Suporte (${tickets?.length || 0})` },
+    { id: 'chat', label: 'Chat' },
   ];
 
   return (
@@ -166,7 +289,17 @@ export function ClienteDetalhe() {
 
           {/* Status do Site */}
           <Card>
-            <h3 className="text-lg font-semibold text-dark mb-4">Status do Site</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-dark">Status do Site</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsSiteStatusModalOpen(true)}
+              >
+                <Edit className="w-4 h-4 mr-2" />
+                Editar Status
+              </Button>
+            </div>
             {siteStatus ? (
               <div className="space-y-3">
                 <StatusBadge status={siteStatus.status} type="site" />
@@ -175,251 +308,101 @@ export function ClienteDetalhe() {
                     <p className="text-sm text-gray-600">{siteStatus.notes}</p>
                   </div>
                 )}
-                {pipeline && (
-                  <div className="mt-3 pt-3 border-t">
-                    <p className="text-sm text-gray-600 mb-1">Pipeline:</p>
-                    <Badge>{pipeline.stage}</Badge>
+                {siteStatus.preview_url && (
+                  <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">URL de Preview:</p>
+                    <p className="text-sm font-mono text-blue-900">{siteStatus.preview_url}</p>
+                  </div>
+                )}
+                {siteStatus.live_url && (
+                  <div className="mt-3 p-3 bg-green-50 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">URL do Site Publicado:</p>
+                    <p className="text-sm font-mono text-green-900">{siteStatus.live_url}</p>
                   </div>
                 )}
               </div>
             ) : (
-              <p className="text-gray-500">Status não disponível</p>
-            )}
-          </Card>
-
-          {/* Domínio */}
-          <Card>
-            <h3 className="text-lg font-semibold text-dark mb-4">Domínio</h3>
-            {domain ? (
               <div className="space-y-3">
-                <p className="font-mono font-semibold text-primary">{domain.domain}</p>
-                <StatusBadge status={domain.status} type="domain" />
-                {domain.notes && (
-                  <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600">{domain.notes}</p>
-                  </div>
-                )}
+                <p className="text-gray-500">Status não disponível</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsSiteStatusModalOpen(true)}
+                >
+                  Criar Status
+                </Button>
               </div>
-            ) : (
-              <p className="text-gray-500">Nenhum domínio configurado</p>
-            )}
-          </Card>
-
-          {/* E-mails */}
-          <Card>
-            <h3 className="text-lg font-semibold text-dark mb-4">E-mails Profissionais</h3>
-            {emails && emails.length > 0 ? (
-              <div className="space-y-2">
-                {emails.map((email: any) => (
-                  <div key={email.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <span className="text-sm font-mono">{email.email}</span>
-                    <StatusBadge status={email.status} type="email" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-gray-500">Nenhum e-mail configurado</p>
             )}
           </Card>
         </div>
       )}
 
       {activeTab === 'briefing' && (
-        <Card>
-          <h3 className="text-lg font-semibold text-dark mb-4">Briefing do Cliente</h3>
-          {briefing ? (
-            <div className="space-y-4">
-              <div className="mb-4">
-                <StatusBadge status={briefing.status} type="briefing" />
-                <p className="text-sm text-gray-500 mt-2">
-                  Última atualização: {new Date(briefing.updated_at).toLocaleDateString('pt-BR')}
-                </p>
+        <div className="space-y-6">
+          {/* Header do Briefing */}
+          <Card padding="md">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-2xl font-black text-dark">Briefing do Projeto</h2>
+                <p className="text-gray-600 mt-1">Quanto mais detalhes você fornecer, melhor será seu site</p>
               </div>
-              
-              {/* Mostra dados novos (campos diretos) se existirem */}
-              {(briefing.company_name || briefing.segment || briefing.full_name) ? (
-                <div className="space-y-6">
-                  {/* Seção 1: Dados da Empresa */}
-                  {(briefing.company_name || briefing.segment || briefing.full_name) && (
-                    <div className="border-l-4 border-primary pl-4">
-                      <h4 className="font-semibold text-dark mb-3">Dados da Empresa</h4>
-                      <div className="space-y-2">
-                        {briefing.company_name && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Nome da Empresa</p>
-                            <p className="text-gray-600">{briefing.company_name}</p>
-                          </div>
-                        )}
-                        {briefing.segment && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Segmento</p>
-                            <p className="text-gray-600">{briefing.segment}</p>
-                          </div>
-                        )}
-                        {briefing.full_name && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Nome Completo</p>
-                            <p className="text-gray-600">{briefing.full_name}</p>
-                          </div>
-                        )}
-                        {briefing.commercial_email && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">E-mail Comercial</p>
-                            <p className="text-gray-600">{briefing.commercial_email}</p>
-                          </div>
-                        )}
-                        {(briefing.whatsapp_commercial || (briefing as any).whatsapp) && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">WhatsApp</p>
-                            <p className="text-gray-600">{briefing.whatsapp_commercial || (briefing as any).whatsapp}</p>
-                          </div>
-                        )}
-                        {briefing.landline && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Telefone Fixo</p>
-                            <p className="text-gray-600">{briefing.landline}</p>
-                          </div>
-                        )}
-                        {briefing.address && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Endereço</p>
-                            <p className="text-gray-600">{briefing.address}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Seção 2: Estrutura do Site */}
-                  {(briefing.company_description || briefing.target_audience || briefing.main_services) && (
-                    <div className="border-l-4 border-blue-500 pl-4">
-                      <h4 className="font-semibold text-dark mb-3">Estrutura do Site</h4>
-                      <div className="space-y-3">
-                        {briefing.has_website !== undefined && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Já possui site?</p>
-                            <p className="text-gray-600">{briefing.has_website ? 'Sim' : 'Não'}</p>
-                          </div>
-                        )}
-                        {briefing.current_website_url && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Site Atual</p>
-                            <p className="text-gray-600">
-                              <a href={briefing.current_website_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                                {briefing.current_website_url}
-                              </a>
-                            </p>
-                          </div>
-                        )}
-                        {briefing.company_description && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Descrição da Empresa</p>
-                            <p className="text-gray-600 whitespace-pre-wrap">{briefing.company_description}</p>
-                          </div>
-                        )}
-                        {briefing.target_audience && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Público-alvo</p>
-                            <p className="text-gray-600 whitespace-pre-wrap">{briefing.target_audience}</p>
-                          </div>
-                        )}
-                        {briefing.service_region && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Região de Atendimento</p>
-                            <p className="text-gray-600">{briefing.service_region}</p>
-                          </div>
-                        )}
-                        {briefing.main_services && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Principais Serviços</p>
-                            <p className="text-gray-600 whitespace-pre-wrap">{briefing.main_services}</p>
-                          </div>
-                        )}
-                        {briefing.differentials && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Diferenciais</p>
-                            <p className="text-gray-600 whitespace-pre-wrap">{briefing.differentials}</p>
-                          </div>
-                        )}
-                        {briefing.business_hours && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Horário de Atendimento</p>
-                            <p className="text-gray-600">{briefing.business_hours}</p>
-                          </div>
-                        )}
-                        {briefing.social_links && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Redes Sociais</p>
-                            <p className="text-gray-600 whitespace-pre-wrap">{briefing.social_links}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Seção 3: Identidade Visual */}
-                  {(briefing.has_brand_identity !== undefined || briefing.main_colors) && (
-                    <div className="border-l-4 border-purple-500 pl-4">
-                      <h4 className="font-semibold text-dark mb-3">Identidade Visual</h4>
-                      <div className="space-y-3">
-                        {briefing.has_brand_identity !== undefined && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Possui identidade visual?</p>
-                            <p className="text-gray-600">{briefing.has_brand_identity ? 'Sim' : 'Não'}</p>
-                          </div>
-                        )}
-                        {briefing.brand_assets_links && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Links dos Arquivos</p>
-                            <p className="text-gray-600 whitespace-pre-wrap">{briefing.brand_assets_links}</p>
-                          </div>
-                        )}
-                        {briefing.main_colors && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Cores Principais</p>
-                            <p className="text-gray-600">{briefing.main_colors}</p>
-                          </div>
-                        )}
-                        {briefing.forbidden_colors && (
-                          <div>
-                            <p className="text-sm font-semibold text-gray-700">Cores Proibidas</p>
-                            <p className="text-gray-600">{briefing.forbidden_colors}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Seção 4: Observações Finais */}
-                  {briefing.general_notes && (
-                    <div className="border-l-4 border-green-500 pl-4">
-                      <h4 className="font-semibold text-dark mb-3">Observações Finais</h4>
-                      <p className="text-gray-600 whitespace-pre-wrap">{briefing.general_notes}</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                // Fallback: mostra answers antigo se não tiver campos novos
-                briefing.answers && typeof briefing.answers === 'object' && Object.keys(briefing.answers).length > 0 ? (
-                  <div className="space-y-4">
-                    {Object.entries(briefing.answers).map(([key, value]) => (
-                      <div key={key} className="border-l-4 border-primary pl-4">
-                        <p className="text-sm font-semibold text-gray-700 capitalize mb-1">
-                          {key.replace(/_/g, ' ')}
-                        </p>
-                        <p className="text-gray-600">{value as string}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-gray-500">Briefing ainda não preenchido</p>
-                )
-              )}
+              <div className="flex items-center gap-3">
+                <StatusBadge status={briefing?.status || 'nao_enviado'} type="briefing" />
+                {briefing && (
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      const updatedAt = briefing.updated_at 
+                        ? new Date(briefing.updated_at).toLocaleString('pt-BR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })
+                        : undefined;
+                      
+                      exportBriefingToPDF(
+                        briefing,
+                        {
+                          name: profile?.name,
+                          company_name: profile?.company_name || briefing.company_name,
+                          email: profile?.email,
+                          phone: profile?.phone || briefing.whatsapp_commercial,
+                        },
+                        updatedAt
+                      );
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Exportar PDF
+                  </Button>
+                )}
+              </div>
             </div>
+            {briefing?.updated_at && (
+              <p className="text-sm text-gray-500">
+                Última atualização: {new Date(briefing.updated_at).toLocaleString('pt-BR', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </p>
+            )}
+          </Card>
+
+          {/* Componente de Briefing Read-Only */}
+          {briefing ? (
+            <BriefingReadOnly briefing={briefing} />
           ) : (
-            <p className="text-gray-500">Briefing não enviado</p>
+            <Card padding="lg">
+              <p className="text-gray-500 text-center py-8">Briefing ainda não preenchido pelo cliente</p>
+            </Card>
           )}
-        </Card>
+        </div>
       )}
 
       {activeTab === 'pagamentos' && (
@@ -539,46 +522,203 @@ export function ClienteDetalhe() {
 
       {activeTab === 'dominio' && (
         <Card>
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-3 mb-6">
             <Globe className="w-6 h-6 text-primary" />
             <h3 className="text-lg font-semibold text-dark">Domínio</h3>
           </div>
           {domain ? (
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm text-gray-600 mb-2">Domínio configurado:</p>
-                <p className="text-2xl font-mono font-bold text-primary">{domain.domain}</p>
+            <div className="space-y-6">
+              {/* Status e Domínio */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 mb-2">Status:</p>
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={domain.status} type="domain" />
+                      <select
+                        value={domain.status}
+                        onChange={(e) => {
+                          updateDomainStatusMutation.mutate({ 
+                            status: e.target.value,
+                            domain: approvedDomain || undefined
+                          });
+                        }}
+                        disabled={updateDomainStatusMutation.isPending}
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <option value="pendente">Pendente</option>
+                        <option value="aguardando_dns">Aguardando DNS</option>
+                        <option value="configurando">Configurando</option>
+                        <option value="ativo">Ativo</option>
+                      </select>
+                    </div>
+                  </div>
+                  {domain.domain && (
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Domínio Atual:</p>
+                      <p className="text-xl font-mono font-bold text-primary">{domain.domain}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Campo para definir o domínio aprovado */}
+                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-sm font-semibold text-green-900 mb-3">
+                    🌐 Domínio Aprovado e em Uso
+                  </p>
+                  <p className="text-xs text-green-800 mb-3">
+                    Defina aqui qual domínio foi aprovado e será utilizado. Esta informação será exibida para o cliente na área do cliente.
+                  </p>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <Input
+                        label="Domínio Aprovado"
+                        type="text"
+                        placeholder="exemplo.com.br"
+                        value={approvedDomain}
+                        onChange={(e) => setApprovedDomain(e.target.value)}
+                        helperText="Digite o domínio completo que será utilizado (ex: meusite.com.br)"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        onClick={() => {
+                          updateDomainStatusMutation.mutate({ 
+                            status: domain.status,
+                            domain: approvedDomain || undefined
+                          });
+                        }}
+                        disabled={updateDomainStatusMutation.isPending || !approvedDomain.trim()}
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        {updateDomainStatusMutation.isPending ? 'Salvando...' : 'Salvar Domínio'}
+                      </Button>
+                    </div>
+                  </div>
+                  {domain.domain && (
+                    <div className="mt-3 p-3 bg-white rounded border border-green-200">
+                      <p className="text-xs text-gray-600 mb-1">Domínio configurado:</p>
+                      <p className="text-sm font-mono font-semibold text-green-900">{domain.domain}</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div>
-                <p className="text-sm text-gray-600 mb-2">Status:</p>
-                <StatusBadge status={domain.status} type="domain" />
-              </div>
-
+              {/* Informações da Solicitação */}
               {domain.notes && (
-                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm font-semibold text-gray-700 mb-2">Observações:</p>
-                  <p className="text-sm text-gray-600">{domain.notes}</p>
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm font-semibold text-blue-900 mb-3">Informações da Solicitação:</p>
+                  <div className="space-y-3">
+                    {(() => {
+                      // Parse das informações do notes
+                      const notes = domain.notes;
+                      
+                      // Verifica se é domínio existente ou novo
+                      if (notes.includes('Domínio existente registrado em')) {
+                        // Domínio existente
+                        const platformMatch = notes.match(/registrado em (.+?)\./);
+                        const loginMatch = notes.match(/Login: (.+)/);
+                        const platform = platformMatch ? platformMatch[1] : '';
+                        const login = loginMatch ? loginMatch[1] : '';
+                        
+                        return (
+                          <>
+                            <div className="bg-white p-3 rounded border border-blue-100">
+                              <p className="text-xs font-semibold text-blue-800 mb-2">Tipo: Domínio Existente</p>
+                              {domain.domain && (
+                                <div className="mb-2">
+                                  <p className="text-xs text-gray-600">Domínio:</p>
+                                  <p className="text-sm font-mono font-semibold text-gray-900">{domain.domain}</p>
+                                </div>
+                              )}
+                              {platform && (
+                                <div className="mb-2">
+                                  <p className="text-xs text-gray-600">Plataforma/Registrador:</p>
+                                  <p className="text-sm font-semibold text-gray-900">{platform}</p>
+                                </div>
+                              )}
+                              {login && (
+                                <div>
+                                  <p className="text-xs text-gray-600">Login/Acesso:</p>
+                                  <p className="text-sm font-mono text-gray-900">{login}</p>
+                                </div>
+                              )}
+                              <div className="mt-2 pt-2 border-t border-blue-100">
+                                <p className="text-xs text-gray-500">Senha: [fornecida pelo cliente]</p>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      } else if (notes.includes('Solicitação de novo domínio')) {
+                        // Novo domínio
+                        const optionsMatch = notes.match(/Opções desejadas:\n(.+)/s);
+                        const options = optionsMatch ? optionsMatch[1].trim() : '';
+                        
+                        return (
+                          <>
+                            <div className="bg-white p-3 rounded border border-blue-100">
+                              <p className="text-xs font-semibold text-blue-800 mb-2">Tipo: Novo Domínio</p>
+                              {options && (
+                                <div>
+                                  <p className="text-xs text-gray-600 mb-2">Opções de Domínio Desejadas:</p>
+                                  <div className="space-y-1">
+                                    {options.split('\n').map((option, index) => (
+                                      <p key={index} className="text-sm font-mono text-gray-900">
+                                        {index + 1}. {option.trim()}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        );
+                      } else {
+                        // Fallback: mostra as notas como estão
+                        return (
+                          <div className="bg-white p-3 rounded border border-blue-100">
+                            <p className="text-sm text-gray-700 whitespace-pre-line">{notes}</p>
+                          </div>
+                        );
+                      }
+                    })()}
+                  </div>
                 </div>
               )}
 
-              <div className="mt-4 pt-4 border-t text-sm text-gray-600">
-                <p className="mb-1">
-                  <strong>Registrado em:</strong>{' '}
-                  {new Date(domain.created_at).toLocaleDateString('pt-BR')}
-                </p>
-                <p>
-                  <strong>Última atualização:</strong>{' '}
-                  {new Date(domain.updated_at).toLocaleDateString('pt-BR')}
-                </p>
+              {/* Datas */}
+              <div className="pt-4 border-t text-sm text-gray-600">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="font-semibold text-gray-700 mb-1">Solicitado em:</p>
+                    <p>{new Date(domain.created_at).toLocaleString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-700 mb-1">Última atualização:</p>
+                    <p>{new Date((domain as any).updated_at || domain.created_at).toLocaleString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}</p>
+                  </div>
+                </div>
               </div>
             </div>
           ) : (
             <div className="text-center py-8">
               <Globe className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500">Nenhum domínio configurado</p>
+              <p className="text-gray-500">Nenhuma solicitação de domínio</p>
               <p className="text-sm text-gray-400 mt-1">
-                O cliente ainda não tem um domínio registrado
+                O cliente ainda não solicitou um domínio
               </p>
             </div>
           )}
@@ -593,17 +733,50 @@ export function ClienteDetalhe() {
           </div>
           {emails && emails.length > 0 ? (
             <div className="space-y-3">
-              {emails.map((email: any) => (
+              {emails.map((email: EmailProfessional) => (
                 <div key={email.id} className="p-4 border rounded-lg hover:bg-gray-50 transition-colors">
                   <div className="flex items-center justify-between mb-2">
                     <p className="font-mono font-semibold text-primary">{email.email}</p>
-                    <StatusBadge status={email.status} type="email" />
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={email.status} type="email" />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setSelectedEmail(email);
+                          setIsEmailStatusModalOpen(true);
+                        }}
+                      >
+                        Editar Status
+                      </Button>
+                    </div>
                   </div>
+                  {email.access_url && (
+                    <p className="text-sm text-gray-600 mt-2">
+                      <strong>URL de Acesso:</strong>{' '}
+                      <a
+                        href={email.access_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline font-mono text-xs"
+                      >
+                        {email.access_url}
+                      </a>
+                    </p>
+                  )}
                   {email.notes && (
-                    <p className="text-sm text-gray-600">{email.notes}</p>
+                    <p className="text-sm text-gray-600 mt-2">
+                      <strong>Observações:</strong> {email.notes}
+                    </p>
                   )}
                   <p className="text-xs text-gray-400 mt-2">
-                    Criado em: {new Date(email.created_at).toLocaleDateString('pt-BR')}
+                    Criado em: {new Date(email.created_at).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
                   </p>
                 </div>
               ))}
@@ -618,6 +791,117 @@ export function ClienteDetalhe() {
             </div>
           )}
         </Card>
+      )}
+
+      {activeTab === 'chat' && (
+        <Card padding="none" className="h-[calc(100vh-400px)] flex flex-col">
+          {/* Header do Chat */}
+          <div className="flex items-center justify-between p-4 border-b bg-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white">
+                <User className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-dark">
+                  {profile.name || profile.company_name || 'Cliente'}
+                </h3>
+                {profile.email && (
+                  <p className="text-xs text-gray-500">{profile.email}</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Área de Mensagens */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+            {messages.length === 0 ? (
+              <div className="text-center text-gray-500 py-8">
+                <p>Nenhuma mensagem ainda.</p>
+                <p className="text-sm mt-2">Inicie a conversa enviando uma mensagem!</p>
+              </div>
+            ) : (
+              messages.map((msg: ChatMessage) => {
+                const isOwnMessage = msg.sender_id === user?.id;
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[70%] rounded-lg p-3 ${
+                        isOwnMessage
+                          ? 'bg-primary text-white'
+                          : 'bg-white text-gray-900 border'
+                      }`}
+                    >
+                      {!isOwnMessage && (
+                        <p className="text-xs font-semibold mb-1 opacity-70">
+                          {msg.sender?.name || msg.sender?.company_name || 'Cliente'}
+                        </p>
+                      )}
+                      <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                      <p className={`text-xs mt-1 ${isOwnMessage ? 'text-white/70' : 'text-gray-500'}`}>
+                        {new Date(msg.created_at).toLocaleTimeString('pt-BR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input de Mensagem */}
+          <form onSubmit={handleSendMessage} className="p-4 border-t bg-white">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Digite sua mensagem..."
+                className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                disabled={sendMutation.isPending || !clientConversation?.id}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage(e);
+                  }
+                }}
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={!message.trim() || sendMutation.isPending || !clientConversation?.id}
+              >
+                <Send className="w-4 h-4" />
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {/* Modal de Atualização de Status do Site */}
+      <UpdateSiteStatusModal
+        isOpen={isSiteStatusModalOpen}
+        onClose={() => setIsSiteStatusModalOpen(false)}
+        siteStatus={siteStatus || null}
+        clientId={id!}
+      />
+
+      {/* Modal de Atualização de Status do E-mail */}
+      {selectedEmail && (
+        <UpdateEmailStatusModal
+          isOpen={isEmailStatusModalOpen}
+          onClose={() => {
+            setIsEmailStatusModalOpen(false);
+            setSelectedEmail(null);
+          }}
+          email={selectedEmail}
+          clientId={id!}
+        />
       )}
     </div>
   );

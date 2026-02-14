@@ -96,6 +96,20 @@ export const useAuthStore = create<AuthState>((set) => ({
           stack: apiError.stack,
           name: apiError.name
         });
+        
+        // Se for erro de conexão, não tenta fallback
+        if (apiError.message?.includes('Failed to fetch') || 
+            apiError.message?.includes('ERR_CONNECTION_REFUSED') ||
+            apiError.message?.includes('NetworkError')) {
+          console.error('❌ Backend não está acessível. Verifique se o servidor está rodando.');
+          set({ 
+            user: null, 
+            isAuthenticated: false, 
+            isLoading: false 
+          });
+          return;
+        }
+        
         console.log('💡 Tentando buscar direto do Supabase como fallback...');
       }
       
@@ -111,6 +125,16 @@ export const useAuthStore = create<AuthState>((set) => ({
       
       if (error || !profile) {
         console.log('❌ Perfil não encontrado após todas as tentativas');
+        console.log('💡 Verifique se o perfil existe na tabela profiles para o usuário:', session.user.id);
+        console.log('💡 Erro detalhado:', error);
+        
+        // Se o erro for de RLS ou perfil não encontrado, mostra mensagem específica
+        if (error?.code === 'PGRST116' || error?.message?.includes('No rows')) {
+          console.error('❌ Perfil não existe na tabela profiles. Crie um perfil para este usuário.');
+        } else if (error?.code === '42501' || error?.message?.includes('permission denied')) {
+          console.error('❌ Erro de permissão (RLS). Verifique as políticas de segurança.');
+        }
+        
         set({ user: null, isAuthenticated: false, isLoading: false });
         return;
       }

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../config/supabase';
 import { UserRole } from '@decolaweb/shared';
+import type { Multer } from 'multer';
 
 /**
  * Estende o tipo Request do Express para incluir o usuário autenticado
@@ -11,6 +12,7 @@ export interface AuthRequest extends Request {
     email: string;
     role: UserRole;
   };
+  file?: Express.Multer.File;
 }
 
 /**

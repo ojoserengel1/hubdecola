@@ -1,28 +1,190 @@
 import { useQuery } from '@tanstack/react-query';
 import { getDashboardData } from '@/lib/api';
-import { Card, PageHeader, Badge, StatusBadge, Loading, Button } from '@/components/ui';
-import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle, Clock, FileText, DollarSign, Mail } from 'lucide-react';
-import { SiteStatus } from '@decolaweb/shared';
+import { Card, PageHeader, Loading, Button } from '@/components/ui';
+import { Link, useNavigate } from 'react-router-dom';
+import { MessageSquare, TicketIcon, Globe } from 'lucide-react';
+import { toast } from 'sonner';
+import type { SiteStatusTemplate, StatusButton } from '@decolaweb/shared';
+import * as LucideIcons from 'lucide-react';
 
 export function Dashboard() {
+  // TODOS OS HOOKS DEVEM SER CHAMADOS ANTES DE QUALQUER EARLY RETURN
+  const navigate = useNavigate();
+  
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: getDashboardData,
   });
 
+  // Dados do dashboard
+  const dashboardData = data?.data;
+  const { siteStatus, statusTemplates } = dashboardData || {};
+
+  // Early returns APÓS todos os hooks
   if (isLoading) return <Loading />;
 
-  const dashboardData = data?.data;
-
   if (!dashboardData) {
-    return <div>Erro ao carregar dados</div>;
+    return (
+      <div className="p-6">
+        <PageHeader title="Dashboard" subtitle="Visão geral da sua conta DecolaWeb" />
+        <Card>
+          <p className="text-gray-500">Erro ao carregar dados. Tente recarregar a página.</p>
+        </Card>
+      </div>
+    );
   }
 
-  const { subscription, siteStatus, recentInvoices, briefing, emails, contract } = dashboardData;
+  // Função auxiliar para renderizar ícone dinamicamente
+  const renderIcon = (iconName?: string, defaultIcon: any = Globe) => {
+    if (!iconName) return defaultIcon;
+    const IconComponent = (LucideIcons as any)[iconName] || defaultIcon;
+    return IconComponent;
+  };
 
-  // Calcula se há faturas pendentes
-  const hasPendingInvoices = recentInvoices.some(inv => inv.status === 'pendente' || inv.status === 'atrasado');
+  // Renderiza o banner de status baseado no template personalizado
+  const renderStatusBanner = () => {
+    const statusSlug = siteStatus?.status || 'aguardando_preenchimento';
+    
+    // Busca o template correspondente ao status atual
+    const template = statusTemplates?.find((t: SiteStatusTemplate) => t.slug === statusSlug);
+    
+    // Se não encontrou template, usa fallback padrão
+    if (!template) {
+      return (
+        <Card className="bg-gradient-to-r from-gray-50 to-gray-100 border-2 border-gray-300">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <h3 className="text-xl font-black text-dark mb-2">Status do Seu Site</h3>
+              <p className="text-gray-700">Status não configurado</p>
+            </div>
+            <Globe className="w-16 h-16 text-gray-400 opacity-50" />
+          </div>
+        </Card>
+      );
+    }
+
+    // Esquemas de cores
+    const colorSchemes = {
+      gray: {
+        bg: 'bg-gradient-to-r from-gray-50 to-gray-100',
+        border: 'border-gray-300',
+        text: 'text-gray-800',
+        textBold: 'text-gray-900',
+        icon: 'text-gray-400',
+      },
+      blue: {
+        bg: 'bg-gradient-to-r from-blue-50 to-blue-100',
+        border: 'border-blue-300',
+        text: 'text-blue-800',
+        textBold: 'text-blue-900',
+        icon: 'text-blue-400',
+      },
+      yellow: {
+        bg: 'bg-gradient-to-r from-yellow-50 to-amber-100',
+        border: 'border-yellow-300',
+        text: 'text-yellow-800',
+        textBold: 'text-yellow-900',
+        icon: 'text-yellow-400',
+      },
+      green: {
+        bg: 'bg-gradient-to-r from-green-50 to-emerald-100',
+        border: 'border-green-300',
+        text: 'text-green-800',
+        textBold: 'text-green-900',
+        icon: 'text-green-400',
+      },
+      red: {
+        bg: 'bg-gradient-to-r from-red-50 to-red-100',
+        border: 'border-red-300',
+        text: 'text-red-800',
+        textBold: 'text-red-900',
+        icon: 'text-red-400',
+      },
+      purple: {
+        bg: 'bg-gradient-to-r from-purple-50 to-purple-100',
+        border: 'border-purple-300',
+        text: 'text-purple-800',
+        textBold: 'text-purple-900',
+        icon: 'text-purple-400',
+      },
+    };
+
+    const colors = colorSchemes[template.color_scheme] || colorSchemes.gray;
+    const DefaultIcon = renderIcon(template.buttons?.[0]?.icon, Globe);
+
+    // Renderiza botões
+    const renderButton = (button: StatusButton, index: number) => {
+      const IconComponent = renderIcon(button.icon);
+      
+      const handleClick = () => {
+        if (button.action === 'navigate' && button.url) {
+          navigate(button.url);
+        } else if (button.action === 'approve') {
+          toast.success('Aprovação enviada! Nossa equipe receberá sua confirmação.');
+        } else if (button.action === 'custom' && button.onClick) {
+          // Para ações customizadas, pode-se implementar lógica específica
+          toast.info('Ação customizada');
+        }
+      };
+
+      // Define classes CSS baseadas na variante
+      let buttonClassName = '';
+      if (button.variant === 'primary') {
+        buttonClassName = 'bg-green-600 hover:bg-green-700 text-white';
+      } else if (button.variant === 'secondary') {
+        buttonClassName = 'bg-gray-600 hover:bg-gray-700 text-white';
+      } else if (button.variant === 'outline') {
+        buttonClassName = `border-2 ${colors.border} ${colors.textBold} hover:${colors.bg.replace('bg-', 'bg-')}`;
+      } else if (button.variant === 'ghost') {
+        buttonClassName = `${colors.text} hover:${colors.bg.replace('bg-', 'bg-')}`;
+      } else {
+        buttonClassName = 'bg-green-600 hover:bg-green-700 text-white';
+      }
+
+      return (
+        <Button
+          key={index}
+          onClick={handleClick}
+          variant={button.variant === 'outline' || button.variant === 'ghost' ? 'outline' : 'primary'}
+          className={buttonClassName}
+        >
+          {button.icon && <IconComponent className="w-4 h-4 mr-2" />}
+          {button.label}
+        </Button>
+      );
+    };
+
+    return (
+      <Card className={`${colors.bg} border-2 ${colors.border}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <h3 className={`text-xl font-black ${colors.textBold} mb-2`}>{template.headline}</h3>
+            {template.subheadline && (
+              <p className={`${colors.textBold} font-semibold mb-4`}>
+                {template.subheadline}
+              </p>
+            )}
+            {siteStatus?.preview_url && statusSlug === 'em_aprovacao' && (
+              <p className={`text-sm ${colors.text} mb-3`}>
+                Acesse o link do seu site: <a href={siteStatus.preview_url} target="_blank" rel="noopener noreferrer" className="font-semibold underline hover:${colors.textBold}">{siteStatus.preview_url}</a>
+              </p>
+            )}
+            {siteStatus?.live_url && statusSlug === 'site_publicado' && (
+              <p className={`text-sm ${colors.text} mb-3`}>
+                Seu site está no ar: <a href={siteStatus.live_url} target="_blank" rel="noopener noreferrer" className="font-semibold underline hover:${colors.textBold}">{siteStatus.live_url}</a>
+              </p>
+            )}
+            {template.buttons && template.buttons.length > 0 && (
+              <div className="flex gap-3 mt-4">
+                {template.buttons.map((button, index) => renderButton(button, index))}
+              </div>
+            )}
+          </div>
+          <DefaultIcon className={`w-16 h-16 ${colors.icon} opacity-50`} />
+        </div>
+      </Card>
+    );
+  };
 
   return (
     <div>
@@ -31,220 +193,35 @@ export function Dashboard() {
         subtitle="Visão geral da sua conta DecolaWeb"
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Card: Resumo do Plano */}
-        <Card hover>
-          <div className="flex items-start justify-between mb-4">
-            <h3 className="text-lg font-semibold text-dark">Resumo do Plano</h3>
-            <DollarSign className="w-5 h-5 text-primary" />
-          </div>
-          
-          {subscription ? (
-            <>
-              <p className="text-2xl font-black text-dark mb-2">
-                R$ {subscription.plan?.price_monthly.toFixed(2)}
-                <span className="text-base font-normal text-gray-600">/mês</span>
-              </p>
-              <p className="text-sm text-gray-600 mb-3">{subscription.plan?.name}</p>
-              <StatusBadge status={subscription.status} type="subscription" />
-              
-              <Link to="/app/pagamentos">
-                <Button variant="ghost" size="sm" className="mt-4 w-full">
-                  Ver detalhes do plano
-                  <ArrowRight className="w-4 h-4 ml-2" />
+      <div className="space-y-6">
+        {/* Banner de Status do Site */}
+        {renderStatusBanner()}
+
+        {/* 2. Card: Precisa de ajuda? */}
+        <Card hover className="bg-gradient-to-r from-primary to-red-700 text-white">
+          <div>
+            <h3 className="text-lg font-semibold mb-2">Precisa de ajuda?</h3>
+            <p className="text-sm opacity-90 mb-4">
+              Abra um ticket ou fale conosco pelo chat
+            </p>
+            <div className="flex gap-3">
+              <Link to="/app/tickets" className="flex-1">
+                <Button variant="secondary" size="md" className="w-full flex items-center justify-center">
+                  <TicketIcon className="w-4 h-4 mr-2" />
+                  Abrir Ticket
                 </Button>
               </Link>
-            </>
-          ) : (
-            <p className="text-gray-500">Nenhuma assinatura ativa</p>
-          )}
-        </Card>
-
-        {/* Card: Status do Site */}
-        <Card hover>
-          <div className="flex items-start justify-between mb-4">
-            <h3 className="text-lg font-semibold text-dark">Status do Site</h3>
-            <Clock className="w-5 h-5 text-primary" />
-          </div>
-
-          {siteStatus ? (
-            <>
-              <StatusBadge status={siteStatus.status} type="site" />
-              
-              <div className="mt-4 space-y-2">
-                {siteStatus.status === SiteStatus.WAITING_BRIEFING && (
-                  <p className="text-sm text-gray-600">
-                    Preencha o briefing para iniciarmos o desenvolvimento do seu site!
-                  </p>
-                )}
-                {siteStatus.status === SiteStatus.IN_PRODUCTION && (
-                  <p className="text-sm text-gray-600">
-                    Sua equipe está trabalhando no seu projeto 🚀
-                  </p>
-                )}
-                {siteStatus.status === SiteStatus.UNDER_APPROVAL && (
-                  <p className="text-sm text-gray-600">
-                    Seu site está pronto para revisão!
-                  </p>
-                )}
-                {siteStatus.status === SiteStatus.PUBLISHED && (
-                  <p className="text-sm text-gray-600">
-                    Seu site está no ar! 🎉
-                  </p>
-                )}
-              </div>
-
-              <Link to="/app/status-site">
-                <Button variant="ghost" size="sm" className="mt-4 w-full">
-                  Ver status completo
-                  <ArrowRight className="w-4 h-4 ml-2" />
+              <Link to="/app/chat" className="flex-1">
+                <Button variant="secondary" size="md" className="w-full flex items-center justify-center">
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Falar no Chat
                 </Button>
               </Link>
-            </>
-          ) : (
-            <p className="text-gray-500">Status não disponível</p>
-          )}
-        </Card>
-
-        {/* Card: Contrato */}
-        <Card hover>
-          <div className="flex items-start justify-between mb-4">
-            <h3 className="text-lg font-semibold text-dark">Contrato</h3>
-            <FileText className="w-5 h-5 text-primary" />
-          </div>
-
-          {contract ? (
-            <>
-              <Badge variant={contract.status === 'assinado' ? 'success' : 'warning'}>
-                {contract.status === 'assinado' ? 'Assinado' : 'Pendente de assinatura'}
-              </Badge>
-
-              {contract.status === 'pendente' && (
-                <>
-                  <p className="text-sm text-gray-600 mt-3">
-                    Assine seu contrato para prosseguirmos com o desenvolvimento
-                  </p>
-                  <Link to="/app/contrato">
-                    <Button variant="primary" size="sm" className="mt-4 w-full">
-                      Assinar contrato
-                    </Button>
-                  </Link>
-                </>
-              )}
-
-              {contract.status === 'assinado' && (
-                <>
-                  <p className="text-sm text-gray-600 mt-3">
-                    Contrato assinado em {new Date(contract.signed_at!).toLocaleDateString('pt-BR')}
-                  </p>
-                  <Link to="/app/contrato">
-                    <Button variant="ghost" size="sm" className="mt-4 w-full">
-                      Ver contrato
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                  </Link>
-                </>
-              )}
-            </>
-          ) : (
-            <p className="text-gray-500">Contrato não disponível</p>
-          )}
-        </Card>
-
-        {/* Card: Pagamentos e Faturas */}
-        <Card hover className="md:col-span-2">
-          <div className="flex items-start justify-between mb-4">
-            <h3 className="text-lg font-semibold text-dark">Pagamentos e Faturas</h3>
-            <CheckCircle className={hasPendingInvoices ? 'w-5 h-5 text-yellow-500' : 'w-5 h-5 text-green-500'} />
-          </div>
-
-          {hasPendingInvoices ? (
-            <Badge variant="warning">Há faturas pendentes</Badge>
-          ) : (
-            <Badge variant="success">Tudo em dia</Badge>
-          )}
-
-          {recentInvoices.length > 0 ? (
-            <>
-              <div className="mt-4 space-y-2">
-                {recentInvoices.slice(0, 3).map((invoice) => (
-                  <div key={invoice.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <div>
-                      <p className="text-sm font-semibold">
-                        {new Date(invoice.due_date).toLocaleDateString('pt-BR')}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        R$ {invoice.amount.toFixed(2)}
-                      </p>
-                    </div>
-                    <StatusBadge status={invoice.status} type="invoice" />
-                  </div>
-                ))}
-              </div>
-
-              <Link to="/app/pagamentos">
-                <Button variant="ghost" size="sm" className="mt-4 w-full">
-                  Ver todas as faturas
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </Link>
-            </>
-          ) : (
-            <p className="text-sm text-gray-500 mt-3">Nenhuma fatura disponível</p>
-          )}
-        </Card>
-
-        {/* Card: E-mails Profissionais */}
-        <Card hover>
-          <div className="flex items-start justify-between mb-4">
-            <h3 className="text-lg font-semibold text-dark">E-mails Profissionais</h3>
-            <Mail className="w-5 h-5 text-primary" />
-          </div>
-
-          {emails.length > 0 ? (
-            <>
-              <p className="text-2xl font-black text-dark mb-2">{emails.length}</p>
-              <p className="text-sm text-gray-600">
-                {emails.length === 1 ? 'e-mail configurado' : 'e-mails configurados'}
-              </p>
-
-              <Link to="/app/emails">
-                <Button variant="ghost" size="sm" className="mt-4 w-full">
-                  Gerenciar e-mails
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </Link>
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-gray-600 mb-3">
-                Nenhum e-mail profissional configurado
-              </p>
-              <Link to="/app/emails">
-                <Button variant="primary" size="sm" className="w-full">
-                  Solicitar e-mail
-                </Button>
-              </Link>
-            </>
-          )}
-        </Card>
-
-        {/* Card: Suporte */}
-        <Card hover className="md:col-span-2 lg:col-span-3 bg-gradient-to-r from-primary to-red-700 text-white">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold mb-2">Precisa de ajuda?</h3>
-              <p className="text-sm opacity-90">
-                Nossa equipe está pronta para te atender via WhatsApp ou através de tickets de suporte
-              </p>
             </div>
-            <Link to="/app/suporte">
-              <Button variant="secondary" size="md">
-                Abrir Suporte
-              </Button>
-            </Link>
           </div>
         </Card>
+
+
       </div>
     </div>
   );

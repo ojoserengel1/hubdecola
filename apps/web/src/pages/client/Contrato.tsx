@@ -166,7 +166,7 @@ export function Contrato() {
                 Baixar Contrato Completo (PDF)
               </Button>
               {contract.status === 'pendente' && (
-                <Button variant="primary" fullWidth>
+                <Button variant="primary" fullWidth className="bg-green-600 hover:bg-green-700 text-white font-bold">
                   Assinar Agora
                 </Button>
               )}

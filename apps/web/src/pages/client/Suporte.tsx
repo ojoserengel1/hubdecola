@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getTickets, createTicket } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { getTickets } from '@/lib/api';
+import { supabase } from '@/config/supabase';
 import {
   Card,
   PageHeader,
   Loading,
   Button,
-  Input,
   Textarea,
   Select,
   StatusBadge,
@@ -19,76 +20,140 @@ import {
   TableRow,
   TableCell,
 } from '@/components/ui';
-import { MessageCircle, Mail, Plus, ExternalLink } from 'lucide-react';
-import { TicketPriority } from '@decolaweb/shared';
+import { Plus } from 'lucide-react';
 
 export function Suporte() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null);
 
   const [formData, setFormData] = useState({
-    subject: '',
+    subject: '', // Usado para armazenar a categoria
     description: '',
-    priority: 'media' as TicketPriority,
   });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const ticketCategories = [
+    {
+      value: 'Financeiro / Pagamentos',
+      label: 'Financeiro / Pagamentos',
+      description: 'Fatura em aberto, 2ª via, erro no pagamento, cobrança em duplicidade.',
+    },
+    {
+      value: 'Plano / Assinatura / Contrato',
+      label: 'Plano / Assinatura / Contrato',
+      description: 'Dúvidas sobre o plano R$ 99,90, upgrades/downgrades, cancelamento, período de fidelidade, contrato para assinatura.',
+    },
+    {
+      value: 'Briefing / Informações do Site',
+      label: 'Briefing / Informações do Site',
+      description: 'Problemas para enviar o briefing, ajustes nas informações enviadas, dúvidas sobre como preencher.',
+    },
+    {
+      value: 'Site / Conteúdo / Ajustes',
+      label: 'Site / Conteúdo / Ajustes',
+      description: 'Mudanças de texto, inclusão/remoção de seções, fotos, portfólio, depoimentos, correção de erros no site.',
+    },
+    {
+      value: 'E-mails Profissionais',
+      label: 'E-mails Profissionais',
+      description: 'Criação, alteração ou exclusão de contas, problemas de acesso, configuração em celular/computador.',
+    },
+    {
+      value: 'Suporte Geral / Dúvidas',
+      label: 'Suporte Geral / Dúvidas',
+      description: 'Qualquer assunto que não se encaixe nas categorias anteriores, dúvidas gerais sobre o serviço.',
+    },
+    {
+      value: 'Solicitação de Novos Serviços / Upgrades',
+      label: 'Solicitação de Novos Serviços / Upgrades',
+      description: 'Landing pages extras, páginas adicionais, integrações (Pixel, Google Analytics, etc.), serviços fora do escopo do plano.',
+    },
+  ];
 
   const { data, isLoading } = useQuery({
     queryKey: ['tickets'],
     queryFn: getTickets,
   });
 
-  const mutation = useMutation({
-    mutationFn: createTicket,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tickets'] });
-      setIsModalOpen(false);
-      setFormData({
-        subject: '',
-        description: '',
-        priority: 'media' as TicketPriority,
-      });
-      alert('Ticket criado com sucesso!');
-    },
-  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    mutation.mutate(formData);
-  };
+    
+    // Validação: categoria é obrigatória
+    if (!formData.subject || formData.subject === '') {
+      alert('Por favor, selecione uma categoria para o ticket.');
+      return;
+    }
+    
+    setIsSubmitting(true);
+    
+    // Criar FormData para enviar arquivo se houver
+    const formDataToSend = new FormData();
+    formDataToSend.append('subject', formData.subject);
+    formDataToSend.append('description', formData.description);
+    formDataToSend.append('priority', 'media');
+    
+    if (selectedFile) {
+      formDataToSend.append('attachment', selectedFile);
+    }
+    
+    // Usar fetch diretamente para enviar FormData
+    try {
+      // Obter token da sessão do Supabase
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
+      if (!token) {
+        alert('Sessão expirada. Por favor, faça login novamente.');
+        return;
+      }
+      
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+      const response = await fetch(`${API_URL}/tickets`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          // Não definir Content-Type para FormData - o browser define automaticamente com boundary
+        },
+        body: formDataToSend,
+      });
 
-  const faqs = [
-    {
-      question: 'Como funciona o plano de R$ 99,90/mês?',
-      answer:
-        'Nosso plano inclui criação completa do site, hospedagem, domínio, certificado SSL, e-mails profissionais e suporte contínuo. Você paga uma mensalidade fixa e nós cuidamos de tudo!',
-    },
-    {
-      question: 'Quanto tempo leva para meu site ficar pronto?',
-      answer:
-        'O prazo médio é de 7 a 15 dias após o envio do briefing completo. Dependendo da complexidade e da rapidez nas aprovações, pode ser até mais rápido!',
-    },
-    {
-      question: 'Posso usar meu próprio domínio?',
-      answer:
-        'Sim! Se você já tem um domínio registrado, podemos configurá-lo para apontar para seu site. Se não tiver, nós registramos um para você sem custo adicional.',
-    },
-    {
-      question: 'Posso solicitar alterações no site?',
-      answer:
-        'Sim! Você pode solicitar alterações através do suporte. Pequenas alterações de texto e imagens são gratuitas. Mudanças estruturais podem ter custo adicional.',
-    },
-    {
-      question: 'Como cancelo minha assinatura?',
-      answer:
-        'Você pode cancelar a qualquer momento através do suporte. O cancelamento será efetivado ao final do período já pago, sem multas ou taxas.',
-    },
-    {
-      question: 'O que está incluído na hospedagem?',
-      answer:
-        'A hospedagem inclui servidor otimizado, certificado SSL (HTTPS), backups automáticos, proteção contra ataques e suporte técnico especializado.',
-    },
-  ];
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // Se for erro de autenticação, redireciona para login
+        if (response.status === 401) {
+          alert('Sessão expirada. Por favor, faça login novamente.');
+          window.location.href = '/login';
+          return;
+        }
+        
+        throw new Error(errorData.error || 'Erro ao criar ticket');
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        queryClient.invalidateQueries({ queryKey: ['tickets'] });
+        setIsModalOpen(false);
+        setFormData({
+          subject: '',
+          description: '',
+        });
+        setSelectedFile(null);
+        alert('Ticket criado com sucesso!');
+      } else {
+        alert(result.error || 'Erro ao criar ticket');
+      }
+    } catch (error: any) {
+      console.error('Erro ao criar ticket:', error);
+      alert(error.message || 'Erro ao criar ticket. Tente novamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   if (isLoading) return <Loading />;
 
@@ -97,83 +162,9 @@ export function Suporte() {
   return (
     <div>
       <PageHeader
-        title="Suporte"
-        subtitle="Estamos aqui para ajudar você"
+        title="Tickets"
+        subtitle="Gerencie seus tickets de suporte"
       />
-
-      {/* Cards de Contato Rápido */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <Card hover className="bg-green-50 border border-green-200">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-green-500 rounded-lg">
-              <MessageCircle className="w-6 h-6 text-white" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-dark mb-1">WhatsApp</h3>
-              <p className="text-sm text-gray-600 mb-3">
-                Fale diretamente com nossa equipe
-              </p>
-              <a
-                href="https://wa.me/5511999999999"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button size="sm" variant="outline" className="w-full">
-                  Abrir WhatsApp
-                  <ExternalLink className="w-4 h-4 ml-2" />
-                </Button>
-              </a>
-            </div>
-          </div>
-        </Card>
-
-        <Card hover>
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary rounded-lg">
-              <Mail className="w-6 h-6 text-white" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-dark mb-1">E-mail</h3>
-              <p className="text-sm text-gray-600 mb-1">suporte@decolaweb.com.br</p>
-              <a href="mailto:suporte@decolaweb.com.br">
-                <Button size="sm" variant="ghost" className="w-full">
-                  Enviar E-mail
-                </Button>
-              </a>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* FAQ */}
-      <Card className="mb-6">
-        <h3 className="text-lg font-semibold text-dark mb-4">
-          Perguntas Frequentes
-        </h3>
-        <div className="space-y-2">
-          {faqs.map((faq, index) => (
-            <div
-              key={index}
-              className="border border-gray-200 rounded-lg overflow-hidden"
-            >
-              <button
-                onClick={() => setExpandedFAQ(expandedFAQ === index ? null : index)}
-                className="w-full px-4 py-3 text-left font-semibold text-dark hover:bg-gray-50 transition-colors flex items-center justify-between"
-              >
-                {faq.question}
-                <span className="text-primary">
-                  {expandedFAQ === index ? '−' : '+'}
-                </span>
-              </button>
-              {expandedFAQ === index && (
-                <div className="px-4 py-3 bg-gray-50 border-t">
-                  <p className="text-sm text-gray-600">{faq.answer}</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </Card>
 
       {/* Meus Tickets */}
       <Card>
@@ -188,22 +179,22 @@ export function Suporte() {
         {tickets.length > 0 ? (
           <Table>
             <TableHeader>
-              <TableHead>Assunto</TableHead>
-              <TableHead>Prioridade</TableHead>
+              <TableHead>Categoria</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Criado em</TableHead>
             </TableHeader>
             <TableBody>
               {tickets.map((ticket) => (
-                <TableRow key={ticket.id} className="cursor-pointer hover:bg-gray-50">
+                <TableRow 
+                  key={ticket.id} 
+                  className="cursor-pointer hover:bg-gray-50"
+                  onClick={() => navigate(`/app/tickets/${ticket.id}`)}
+                >
                   <TableCell>
                     <p className="font-semibold">{ticket.subject}</p>
                     <p className="text-xs text-gray-500 line-clamp-1">
                       {ticket.description}
                     </p>
-                  </TableCell>
-                  <TableCell>
-                    <span className="capitalize">{ticket.priority}</span>
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={ticket.status} type="ticket" />
@@ -236,13 +227,27 @@ export function Suporte() {
         title="Abrir Novo Ticket"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Assunto"
+          <Select
+            label="Categoria do Ticket"
             value={formData.subject}
             onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
             required
-            placeholder="Descreva brevemente o problema"
+            options={[
+              { value: '', label: 'Escolha a categoria do seu ticket' },
+              ...ticketCategories.map((cat) => ({
+                value: cat.value,
+                label: cat.label,
+              })),
+            ]}
           />
+          
+          {formData.subject && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-900">
+                {ticketCategories.find((cat) => cat.value === formData.subject)?.description}
+              </p>
+            </div>
+          )}
 
           <Textarea
             label="Descrição"
@@ -253,18 +258,25 @@ export function Suporte() {
             placeholder="Descreva em detalhes o que você precisa..."
           />
 
-          <Select
-            label="Prioridade"
-            value={formData.priority}
-            onChange={(e) =>
-              setFormData({ ...formData, priority: e.target.value as TicketPriority })
-            }
-            options={[
-              { value: 'baixa', label: 'Baixa' },
-              { value: 'media', label: 'Média' },
-              { value: 'alta', label: 'Alta' },
-            ]}
-          />
+          <div>
+            <label className="block text-sm font-semibold text-dark mb-2">
+              Anexar Arquivo (Opcional)
+            </label>
+            <p className="text-xs text-gray-500 mb-3">
+              Se quiser, você pode adicionar um arquivo (imagem, PDF ou documento) que ajude a descrever melhor o problema.
+            </p>
+            <input
+              type="file"
+              accept="image/*,.pdf,.doc,.docx,.txt"
+              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+            />
+            {selectedFile && (
+              <p className="mt-2 text-sm text-gray-600">
+                Arquivo selecionado: <span className="font-semibold">{selectedFile.name}</span>
+              </p>
+            )}
+          </div>
 
           <div className="flex gap-3">
             <Button
@@ -277,8 +289,8 @@ export function Suporte() {
             </Button>
             <Button
               type="submit"
-              isLoading={mutation.isPending}
-              disabled={mutation.isPending}
+              isLoading={isSubmitting}
+              disabled={isSubmitting}
               fullWidth
             >
               Abrir Ticket

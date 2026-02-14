@@ -54,10 +54,10 @@ export function Clientes() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <PageHeader
-          title="Clientes"
-          subtitle={`${clients.length} cliente(s) cadastrado(s)`}
-        />
+      <PageHeader
+        title="Clientes"
+        subtitle={`${clients.length} cliente(s) cadastrado(s)`}
+      />
         <Button
           variant="primary"
           onClick={() => setIsCreateModalOpen(true)}
@@ -107,7 +107,7 @@ export function Clientes() {
             </TableHeader>
             <TableBody>
               {filteredClients.map((client: any) => (
-                <TableRow 
+                <TableRow
                   key={client.id}
                   onClick={() => navigate(`/admin/clientes/${client.id}`)}
                   className="cursor-pointer hover:bg-gray-50 transition-colors"
@@ -122,18 +122,43 @@ export function Clientes() {
                     {client.company_name || '-'}
                   </TableCell>
                   <TableCell>
-                    {client.subscription?.plan?.name ? (
-                      <div>
-                        <p className="font-semibold">
-                          {client.subscription.plan.name}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          R$ {client.subscription.plan.price_monthly.toFixed(2)}/mês
-                        </p>
-                      </div>
-                    ) : (
-                      '-'
-                    )}
+                    {(() => {
+                      // Normaliza subscriptions (pode vir como array)
+                      let subscription = null;
+                      if (Array.isArray(client.subscriptions)) {
+                        // Pega a subscription ativa ou a mais recente
+                        subscription = client.subscriptions.find((s: any) => s.status === 'ativa') || client.subscriptions[0] || null;
+                      } else if (client.subscriptions) {
+                        subscription = client.subscriptions;
+                      } else if (Array.isArray(client.subscription)) {
+                        subscription = client.subscription[0] || null;
+                      } else if (client.subscription) {
+                        subscription = client.subscription;
+                      }
+                      
+                      // Tenta pegar o plano da subscription primeiro, depois do profile
+                      const plan = subscription?.plan || 
+                                   client.plan ||
+                                   (Array.isArray(client.plan) && client.plan[0]);
+                      
+                      if (plan?.name) {
+                        return (
+                          <div>
+                            <p className="font-semibold">
+                              {plan.name}
+                            </p>
+                            {plan.price_monthly && (
+                              <p className="text-xs text-gray-500">
+                                R$ {typeof plan.price_monthly === 'number' 
+                                  ? plan.price_monthly.toFixed(2).replace('.', ',')
+                                  : parseFloat(String(plan.price_monthly)).toFixed(2).replace('.', ',')}/mês
+                              </p>
+                            )}
+                          </div>
+                        );
+                      }
+                      return '-';
+                    })()}
                   </TableCell>
                   <TableCell>
                     {client.subscription ? (
